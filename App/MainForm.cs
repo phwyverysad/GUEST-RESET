@@ -624,8 +624,8 @@ namespace GuestResetApp
                     NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 sh -c 'rm -f /data/data/com.dts.freefireth/shared_prefs/com.garena.msdk* /data/data/com.dts.freefiremax/shared_prefs/com.garena.msdk* /data/data/com.dts.freefireth/shared_prefs/com.facebook.loginManager* /data/data/com.dts.freefireth/shared_prefs/com.facebook.AccessToken* /data/data/com.dts.freefireth/shared_prefs/com.google.android.gms.signin*'");
 
                     // 3. Delete accounts from system accounts SQLite DB via root without syntax errors
-                    NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 sqlite3 /data/system_ce/0/accounts_ce.db \"DELETE FROM accounts;\"");
-                    NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 sqlite3 /data/system_de/0/accounts_de.db \"DELETE FROM accounts;\"");
+                    NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 sqlite3 /data/system_ce/0/accounts_ce.db \"DELETE FROM authtokens; DELETE FROM extras; DELETE FROM accounts WHERE type LIKE '%garena%'; PRAGMA wal_checkpoint(TRUNCATE);\"");
+                    NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 sqlite3 /data/system_de/0/accounts_de.db \"DELETE FROM authtokens; DELETE FROM extras; DELETE FROM accounts WHERE type LIKE '%garena%'; PRAGMA wal_checkpoint(TRUNCATE);\"");
 
                     // 4. Randomize device android_id
                     string randomId = Guid.NewGuid().ToString("N").Substring(0, 16);
@@ -637,6 +637,10 @@ namespace GuestResetApp
                     NativeAdb.ExecuteShell(activeDevice, "rm -f /sdcard/Android/data/com.dts.freefiremax/files/guest100067.dat");
                     NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 rm -f /data/data/com.dts.freefireth/files/guest100067.dat");
                     NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 rm -f /data/data/com.dts.freefiremax/files/guest100067.dat");
+
+                    // 6. Reload Android OS AccountManager cache by restarting system_server
+                    NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 killall -9 system_server");
+                    System.Threading.Thread.Sleep(3500);
 
                     return true;
                 }
@@ -688,13 +692,26 @@ namespace GuestResetApp
 
             if (success)
             {
-                string successMsg = lang == "EN" ? "Code deployed successfully! Launching Free Fire..." : "ลงโค้ดสำเร็จ! กำลังเปิดเกม Free Fire...";
+                string successMsg = lang == "EN" ? "Code deployed successfully! Auto-logging in..." : "ลงโค้ดสำเร็จ! กำลังเข้าเกมอัตโนมัติ...";
                 SendToastToWeb(successMsg, "success");
 
-                // Auto launch Free Fire
+                // Auto launch Free Fire and perform auto-login
                 await Task.Delay(1000);
                 NativeAdb.ExecuteShell(activeDevice, "monkey -p com.dts.freefireth -c android.intent.category.LAUNCHER 1");
                 NativeAdb.ExecuteShell(activeDevice, "monkey -p com.dts.freefiremax -c android.intent.category.LAUNCHER 1");
+
+                // Auto login automation sequence in background
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(11000);
+                    NativeAdb.ExecuteShell(activeDevice, "input tap 700 790"); // Guest button
+                    await Task.Delay(3000);
+                    NativeAdb.ExecuteShell(activeDevice, "input tap 800 650"); // Tap to start
+                    await Task.Delay(5000);
+                    NativeAdb.ExecuteShell(activeDevice, "input tap 1560 35"); // Close popup 1
+                    await Task.Delay(1000);
+                    NativeAdb.ExecuteShell(activeDevice, "input tap 1560 35"); // Close popup 2
+                });
             }
             else
             {
@@ -726,16 +743,67 @@ namespace GuestResetApp
 
             try
             {
+                // Parse guest JSON for uid and password
+                string uid = "";
+                string pwd = "";
+                try
+                {
+                    using (JsonDocument doc = JsonDocument.Parse(guestJson))
+                    {
+                        var root = doc.RootElement;
+                        if (root.TryGetProperty("guest_account_info", out var info))
+                        {
+                            if (info.TryGetProperty("com.garena.msdk.guest_uid", out var u)) uid = u.GetString() ?? "";
+                            if (info.TryGetProperty("com.garena.msdk.guest_password", out var p)) pwd = p.GetString() ?? "";
+                        }
+                        else
+                        {
+                            if (root.TryGetProperty("com.garena.msdk.guest_uid", out var u)) uid = u.GetString() ?? "";
+                            if (root.TryGetProperty("com.garena.msdk.guest_password", out var p)) pwd = p.GetString() ?? "";
+                        }
+                    }
+                }
+                catch { }
+
                 // 1. Force stop Free Fire first to flush any file handles
                 NativeAdb.ExecuteShell(activeDevice, "am force-stop com.dts.freefireth");
                 NativeAdb.ExecuteShell(activeDevice, "am force-stop com.dts.freefiremax");
 
-                // 2. Write guest token directly into all possible guest storage locations via base64
+                // 2. Update Android OS accounts database and extras
+                if (!string.IsNullOrEmpty(uid) && !string.IsNullOrEmpty(pwd))
+                {
+                    string sqlCe = $"/system/xbin/bstk/su 0 sqlite3 /data/system_ce/0/accounts_ce.db \"UPDATE accounts SET name = '{uid}', password = '{pwd}' WHERE type = 'com.garena.msdk100067th'; UPDATE extras SET value = '{uid}' WHERE key = 'com.garena.msdk.guest_uid'; UPDATE extras SET value = '{pwd}' WHERE key = 'com.garena.msdk.guest_password'; DELETE FROM authtokens; PRAGMA wal_checkpoint(TRUNCATE);\"";
+                    NativeAdb.ExecuteShell(activeDevice, sqlCe);
+
+                    string sqlDe = $"/system/xbin/bstk/su 0 sqlite3 /data/system_de/0/accounts_de.db \"UPDATE accounts SET name = '{uid}' WHERE type = 'com.garena.msdk100067th'; PRAGMA wal_checkpoint(TRUNCATE);\"";
+                    NativeAdb.ExecuteShell(activeDevice, sqlDe);
+                }
+
+                // 3. Write guest token directly into all possible guest storage locations via base64
                 NativeAdb.WriteFileViaBase64(activeDevice, "/sdcard/com.garena.msdk/guest100067.dat", guestJson.Trim());
                 NativeAdb.WriteFileViaBase64(activeDevice, "/sdcard/Android/data/com.dts.freefireth/files/guest100067.dat", guestJson.Trim());
                 NativeAdb.WriteFileViaBase64(activeDevice, "/sdcard/Android/data/com.dts.freefiremax/files/guest100067.dat", guestJson.Trim());
                 NativeAdb.WriteFileViaBase64(activeDevice, "/data/data/com.dts.freefireth/files/guest100067.dat", guestJson.Trim());
                 NativeAdb.WriteFileViaBase64(activeDevice, "/data/data/com.dts.freefiremax/files/guest100067.dat", guestJson.Trim());
+
+                // 4. Write persist.fallback.xml directly to app shared_prefs
+                if (!string.IsNullOrEmpty(uid) && !string.IsNullOrEmpty(pwd))
+                {
+                    string fallbackXml = "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n" +
+                                         $"    <string name=\"com.garena.msdk.guest_password\">{pwd}</string>\n" +
+                                         $"    <string name=\"com.garena.msdk.guest_uid\">{uid}</string>\n</map>";
+                    NativeAdb.WriteFileViaBase64(activeDevice, "/data/data/com.dts.freefireth/shared_prefs/com.garena.msdk.persist.fallback.xml", fallbackXml);
+                    NativeAdb.WriteFileViaBase64(activeDevice, "/data/data/com.dts.freefiremax/shared_prefs/com.garena.msdk.persist.fallback.xml", fallbackXml);
+                    NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 chmod 660 /data/data/com.dts.freefireth/shared_prefs/com.garena.msdk.persist.fallback.xml");
+                    NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 chown u0_a62:u0_a62 /data/data/com.dts.freefireth/shared_prefs/com.garena.msdk.persist.fallback.xml");
+                }
+
+                // 5. Remove any cached OAuth tokens so Free Fire is forced to authenticate the new guest
+                NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 rm -f /data/data/com.dts.freefireth/shared_prefs/com.garena.msdk.token* /data/data/com.dts.freefireth/shared_prefs/com.garena.msdk*crypto* /data/data/com.dts.freefireth/shared_prefs/com.garena.msdk.SERVICE_PREF* /data/data/com.dts.freefiremax/shared_prefs/com.garena.msdk.token* /data/data/com.dts.freefiremax/shared_prefs/com.garena.msdk*crypto* /data/data/com.dts.freefiremax/shared_prefs/com.garena.msdk.SERVICE_PREF*");
+
+                // 6. Reload Android OS AccountManager by soft restarting system_server
+                NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 killall -9 system_server");
+                System.Threading.Thread.Sleep(3500);
 
                 return true;
             }
