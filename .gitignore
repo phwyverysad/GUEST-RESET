@@ -1,0 +1,28 @@
+# Build and Publish Output
+**/bin/
+**/obj/
+**/Bin/
+**/Publish_SingleFile/
+*.dll
+*.pdb
+*.deps.json
+*.runtimeconfig.json
+*.xml
+runtimes/
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+
+# Legacy / Prototype files
+GUI.html
+loader.html
+
+# Windows System Files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/

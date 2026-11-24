@@ -1,0 +1,1648 @@
+<!DOCTYPE html>
+<html lang="th" class="h-full w-full overflow-hidden select-none bg-white dark:bg-[#121214]">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>qq — ลงโค้ดไก่เวล</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Google Fonts: Inter, Noto Sans Thai & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'Noto Sans Thai', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom subtle scrollbars for code editor */
+        .code-scroll::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        .code-scroll::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .code-scroll::-webkit-scrollbar-thumb {
+            background: #e2e8f0;
+            border-radius: 9999px;
+        }
+        .code-scroll::-webkit-scrollbar-thumb:hover {
+            background: #cbd5e1;
+        }
+        .dark .code-scroll::-webkit-scrollbar-thumb {
+            background: #262626;
+        }
+        .dark .code-scroll::-webkit-scrollbar-thumb:hover {
+            background: #3f3f46;
+        }
+
+        /* Subtle grid pattern for splash screen matching design */
+        .bg-grid-pattern {
+            background-image: radial-gradient(rgba(0, 0, 0, 0.08) 1.2px, transparent 1.2px);
+            background-size: 16px 16px;
+        }
+        .dark .bg-grid-pattern {
+            background-image: radial-gradient(rgba(255, 255, 255, 0.08) 1.2px, transparent 1.2px);
+            background-size: 16px 16px;
+        }
+
+        /* Smooth desktop window transitions */
+        .view-transition {
+            transition: opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1), transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), filter 0.35s ease;
+        }
+
+        /* Smooth spring-like entrance animation into main workspace */
+        @keyframes workspacePop {
+            0% {
+                opacity: 0;
+                transform: translateY(14px) scale(0.98);
+            }
+            100% {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        .animate-workspace-enter {
+            animation: workspacePop 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        @keyframes cardStagger {
+            0% {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            100% {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .animate-card-stagger {
+            animation: cardStagger 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.05s both;
+        }
+
+        .animate-bottom-stagger {
+            animation: cardStagger 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.12s both;
+        }
+    </style>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            applyTheme(isDarkMode);
+            const header = document.querySelector('header');
+            if (header) {
+                header.addEventListener('mousedown', (e) => {
+                    // Clicking empty area on header drags window
+                    if (e.target.closest('button') || e.target.closest('a') || e.target.closest('input')) return;
+                    closeAdbPopover();
+                    closeLangDropdown();
+                    if (window.chrome && window.chrome.webview) {
+                        window.chrome.webview.postMessage({ action: 'drag' });
+                    }
+                });
+            }
+
+            // Click outside anywhere on window closes ADB popover and Lang dropdown
+            document.body.addEventListener('mousedown', (e) => {
+                if (!e.target.closest('#adbContainer')) {
+                    closeAdbPopover();
+                }
+                if (!e.target.closest('#langDropdownContainer')) {
+                    closeLangDropdown();
+                }
+            });
+
+            const confirmModalEl = document.getElementById('confirmModal');
+            if (confirmModalEl) {
+                confirmModalEl.addEventListener('mousedown', (e) => {
+                    if (e.target === confirmModalEl) closeConfirmModal();
+                });
+            }
+            const resetConfirmModalEl = document.getElementById('resetConfirmModal');
+            if (resetConfirmModalEl) {
+                resetConfirmModalEl.addEventListener('mousedown', (e) => {
+                    if (e.target === resetConfirmModalEl) closeResetModal();
+                });
+            }
+
+            try {
+                const savedLang = localStorage.getItem('preferredLang');
+                if (savedLang && (savedLang === 'TH' || savedLang === 'EN')) {
+                    setLanguage(savedLang);
+                }
+            } catch (e) {}
+
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.addEventListener('message', (event) => {
+                    const data = event.data;
+                    if (data && data.action === 'adbStatus') {
+                        updateAdbUI(data.connected, data.device);
+                    }
+                    if (data && data.action === 'pasteClipboard') {
+                        handleDirectPastedText(data.text);
+                    }
+                    if (data && data.toast) {
+                        showToast(data.toast, data.type || 'info');
+                    }
+                });
+                window.chrome.webview.postMessage({ action: 'checkAdb' });
+            }
+
+            // Start splash screen loading simulation
+            startSplashSequence();
+        });
+
+        let splashCompleted = false;
+        let splashEtaTimer = null;
+        let currentSplashStep = 1;
+        let isAdbReady = false;
+        let latestAdbState = { connected: false, device: '' };
+
+        function startSplashSequence() {
+            const t = i18n[currentLang];
+            const pBar = document.getElementById('splashProgressBar');
+            const pPct = document.getElementById('splashProgressPct');
+            const pText = document.getElementById('splashStatusText');
+            const pTime = document.getElementById('splashTimeEst');
+
+            const totalDurationMs = 2400; // total time until 100%
+            const startTime = Date.now();
+            const targetEndTime = new Date(startTime + totalDurationMs);
+
+            function updateEta() {
+                if (!pTime || splashCompleted) return;
+                const elapsed = Date.now() - startTime;
+                const remMs = Math.max(0, totalDurationMs - elapsed);
+                const remSec = (remMs / 1000).toFixed(1);
+
+                if (remMs <= 50) {
+                    pTime.textContent = currentLang === 'TH' ? 'เสร็จสิ้น' : 'Done';
+                    pTime.className = 'font-mono text-[11px] text-emerald-600 dark:text-emerald-400 font-medium';
+                } else {
+                    pTime.textContent = currentLang === 'TH' 
+                        ? `เหลือ ~${remSec}s` 
+                        : `~${remSec}s left`;
+                    pTime.className = 'font-mono text-[11px] text-zinc-400 dark:text-zinc-500';
+                }
+            }
+
+            updateEta();
+            splashEtaTimer = setInterval(updateEta, 100);
+
+            // Step 1: Core Runtime (0 to 450ms)
+            currentSplashStep = 1;
+            pText.textContent = i18n[currentLang].splashStatusPrep;
+            pPct.textContent = '10%';
+            pBar.style.width = '10%';
+
+            setTimeout(() => {
+                markStepComplete(1);
+                currentSplashStep = 2;
+                pPct.textContent = '35%';
+                pBar.style.width = '35%';
+                pText.textContent = i18n[currentLang].splashStatusAdb;
+                markStepActive(2);
+
+                if (window.chrome && window.chrome.webview) {
+                    window.chrome.webview.postMessage({ action: 'checkAdb' });
+                }
+
+                const adbStartWait = Date.now();
+                const checkAdbInterval = setInterval(() => {
+                    const waited = Date.now() - adbStartWait;
+                    // In Step 2: Show connecting for at least 500ms so the user sees it in progress, then confirm and show green
+                    if ((isAdbReady && waited >= 500) || waited >= 3500) {
+                        clearInterval(checkAdbInterval);
+                        markStepComplete(2);
+                        // Now transition top header badge to green connected
+                        applyAdbBadge(latestAdbState.connected, latestAdbState.device);
+
+                        currentSplashStep = 3;
+                        pPct.textContent = '65%';
+                        pBar.style.width = '65%';
+                        pText.textContent = i18n[currentLang].splashStatusFs;
+
+                        // Step 3: Check Game Files
+                        setTimeout(() => {
+                            markStepComplete(3);
+                            currentSplashStep = 4;
+                            pPct.textContent = '85%';
+                            pBar.style.width = '85%';
+                            pText.textContent = i18n[currentLang].splashStatusUi;
+
+                            // Step 4: Open Workspace
+                            setTimeout(() => {
+                                markStepComplete(4);
+                                currentSplashStep = 5;
+                                pPct.textContent = '100%';
+                                pBar.style.width = '100%';
+                                pText.textContent = i18n[currentLang].splashStatusDone;
+                                updateEta();
+
+                                setTimeout(() => {
+                                    if (splashEtaTimer) {
+                                        clearInterval(splashEtaTimer);
+                                        splashEtaTimer = null;
+                                    }
+                                    finishSplashTransition();
+                                }, 500);
+                            }, 500);
+                        }, 500);
+                    }
+                }, 100);
+            }, 450);
+        }
+
+        function markStepActive(stepNum) {
+            const stepEl = document.getElementById(`step-${stepNum}`);
+            if (!stepEl) return;
+            const badge = stepEl.querySelector('.step-badge');
+            const sub = document.getElementById('step2Sub');
+            if (badge) {
+                badge.className = 'step-badge px-2 py-0.5 text-[10px] font-mono font-medium rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-300/60 dark:border-amber-800/60 animate-pulse';
+                badge.textContent = currentLang === 'TH' ? 'เชื่อมต่อ...' : 'CONNECTING';
+            }
+            if (sub && stepNum === 2) {
+                sub.textContent = currentLang === 'TH' ? 'adb · กำลังเชื่อมต่อ 127.0.0.1:5555...' : 'adb · connecting to 127.0.0.1:5555...';
+            }
+        }
+
+        function markStepComplete(stepNum) {
+            const stepEl = document.getElementById(`step-${stepNum}`);
+            if (!stepEl) return;
+            const icon = stepEl.querySelector('.step-icon');
+            const title = stepEl.querySelector('.step-title');
+            const badge = stepEl.querySelector('.step-badge');
+
+            if (icon) {
+                icon.className = 'step-icon shrink-0 w-7 h-7 rounded-full bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 flex items-center justify-center shadow-xs transition-colors duration-300';
+            }
+            if (title) {
+                title.className = 'step-title text-xs sm:text-[13px] font-semibold text-zinc-900 dark:text-zinc-100 truncate';
+            }
+            if (badge) {
+                badge.className = 'step-badge px-2 py-0.5 text-[10px] font-mono font-medium rounded-md bg-zinc-200/80 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-300/60 dark:border-zinc-700/60 transition-colors';
+                badge.textContent = 'OK';
+            }
+        }
+
+        function finishSplashTransition() {
+            if (splashCompleted) return;
+            splashCompleted = true;
+
+            const splashView = document.getElementById('splashView');
+            const workspaceView = document.getElementById('workspaceView');
+
+            if (splashView) {
+                // Smooth fade and slight slide-up of splash view
+                splashView.classList.add('opacity-0', '-translate-y-2', 'pointer-events-none');
+                setTimeout(() => {
+                    splashView.classList.add('hidden');
+                    if (workspaceView) {
+                        workspaceView.classList.remove('hidden');
+                        workspaceView.classList.remove('opacity-0', 'scale-95');
+                        workspaceView.classList.add('animate-workspace-enter');
+
+                        if (window.location.hash === '#test') {
+                            handleDirectPastedText('{"guest_account_info":{"com.garena.msdk.guest_uid":"6971117835","com.garena.msdk.guest_password":"086A65E793F2D194BF00A78224D8217EFB5EE761E77DBB2FE8C95ECAAEA6821F"}}');
+                        }
+                    }
+                }, 220);
+            }
+        }
+
+        function updateAdbUI(connected, device) {
+            latestAdbState = { connected, device };
+            if (connected) {
+                isAdbReady = true;
+            }
+            // Update top bar only when splash is finished OR when we are at/past step 2 completion
+            if (splashCompleted || currentSplashStep > 2) {
+                applyAdbBadge(connected, device);
+            }
+        }
+
+        function applyAdbBadge(connected, device) {
+            const btn = document.getElementById('adbStatusBtn');
+            const dot = document.getElementById('adbDot');
+            const text = document.getElementById('adbStatusText');
+            const devName = document.getElementById('adbDeviceName');
+            const step2Sub = document.getElementById('step2Sub');
+
+            if (connected) {
+                dot.className = 'w-2 h-2 rounded-full bg-emerald-500';
+                let shortDev = device || '';
+                if (shortDev.startsWith('127.0.0.1:')) {
+                    shortDev = shortDev.replace('127.0.0.1:', '');
+                } else if (shortDev === 'emulator-5554' || shortDev.includes('5554')) {
+                    shortDev = '5555';
+                } else if (shortDev.startsWith('emulator-')) {
+                    const portNum = parseInt(shortDev.replace('emulator-', ''), 10);
+                    shortDev = (!isNaN(portNum) ? (portNum + 1) : '5555').toString();
+                } else {
+                    shortDev = '5555';
+                }
+                text.textContent = 'ADB : ' + (shortDev || '5555');
+                btn.className = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono font-medium bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200/90 dark:border-emerald-800/80 hover:border-emerald-400 transition-all shrink-0 cursor-pointer shadow-xs active:scale-95';
+                if (devName) {
+                    devName.textContent = (device === 'emulator-5554' || !device) ? '127.0.0.1:5555' : device;
+                }
+                if (step2Sub) {
+                    step2Sub.textContent = `adb · 127.0.0.1:${shortDev || '5555'}`;
+                }
+            } else {
+                dot.className = 'w-2 h-2 rounded-full bg-rose-500';
+                text.textContent = 'ADB : OFF';
+                btn.className = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono font-medium bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 border border-rose-200/90 dark:border-rose-800/80 hover:border-rose-400 transition-all shrink-0 cursor-pointer shadow-xs active:scale-95';
+                if (devName) devName.textContent = 'Disconnected';
+                if (step2Sub) {
+                    step2Sub.textContent = 'adb · not connected';
+                }
+            }
+        }
+
+        function toggleAdbMenu(event) {
+            event.stopPropagation();
+            closeLangDropdown();
+            const popover = document.getElementById('adbPopover');
+            if (popover.classList.contains('hidden')) {
+                popover.classList.remove('hidden');
+                popover.classList.add('flex');
+            } else {
+                closeAdbPopover();
+            }
+        }
+
+        function closeAdbPopover() {
+            const popover = document.getElementById('adbPopover');
+            if (popover) {
+                popover.classList.add('hidden');
+                popover.classList.remove('flex');
+            }
+        }
+
+        function connectCustomAdb() {
+            const input = document.getElementById('customAdbInput');
+            const target = input ? input.value.trim() : '';
+            if (!target) return;
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage({
+                    action: 'connectCustomAdb',
+                    target: target
+                });
+            }
+            closeAdbPopover();
+        }
+
+        function autoDetectAdb() {
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage({ action: 'checkAdb' });
+            }
+            closeAdbPopover();
+        }
+
+        function nativeMinimize() {
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage({ action: 'minimize' });
+            }
+        }
+
+        function nativeClose() {
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage({ action: 'close' });
+            }
+        }
+        // Custom Context Menu Handlers
+        function showCustomContextMenu(x, y) {
+            const menu = document.getElementById('editorContextMenu');
+            if (!menu) return;
+            menu.classList.remove('hidden');
+
+            const menuWidth = 200;
+            const menuHeight = 160;
+            const winWidth = window.innerWidth;
+            const winHeight = window.innerHeight;
+
+            const posX = (x + menuWidth > winWidth) ? Math.max(10, winWidth - menuWidth - 10) : x;
+            const posY = (y + menuHeight > winHeight) ? Math.max(10, winHeight - menuHeight - 10) : y;
+
+            menu.style.left = posX + 'px';
+            menu.style.top = posY + 'px';
+        }
+
+        function closeCustomContextMenu() {
+            const menu = document.getElementById('editorContextMenu');
+            if (menu) menu.classList.add('hidden');
+        }
+
+        function ctxAction(type) {
+            closeCustomContextMenu();
+            const ed = document.getElementById('codeEditor');
+            if (!ed) return;
+
+            if (type === 'cut') {
+                ed.focus();
+                const start = ed.selectionStart;
+                const end = ed.selectionEnd;
+                if (start !== end) {
+                    const sel = ed.value.substring(start, end);
+                    navigator.clipboard.writeText(sel).catch(() => {});
+                    ed.value = ed.value.substring(0, start) + ed.value.substring(end);
+                    ed.selectionStart = ed.selectionEnd = start;
+                    updateCodeStats();
+                }
+            } else if (type === 'copy') {
+                ed.focus();
+                const start = ed.selectionStart;
+                const end = ed.selectionEnd;
+                const text = (start !== end) ? ed.value.substring(start, end) : ed.value;
+                if (text) {
+                    navigator.clipboard.writeText(text).catch(() => {});
+                    showToast(currentLang === 'TH' ? 'คัดลอกข้อความแล้ว' : 'Copied to clipboard', 'info');
+                }
+            } else if (type === 'paste') {
+                ed.focus();
+                pasteFromClipboard();
+            } else if (type === 'selectAll') {
+                ed.focus();
+                ed.select();
+            }
+        }
+
+        // Global Keyboard Shortcut Blocker: F12, Ctrl+Shift+I/J/C, Ctrl+U, Ctrl+R, F5
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'F12' || e.keyCode === 123) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+            }
+            if (e.ctrlKey && e.shiftKey && ['I', 'i', 'J', 'j', 'C', 'c'].includes(e.key)) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+            }
+            if (e.ctrlKey && (e.key === 'U' || e.key === 'u')) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+            }
+            if (e.key === 'F5' || (e.ctrlKey && (e.key === 'R' || e.key === 'r'))) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+            }
+        }, true);
+
+        // Context Menu Event Listener
+        document.addEventListener('contextmenu', (e) => {
+            const ed = e.target.closest('#codeEditor');
+            if (ed) {
+                e.preventDefault();
+                showCustomContextMenu(e.clientX, e.clientY);
+            } else {
+                e.preventDefault();
+                closeCustomContextMenu();
+            }
+        });
+
+        // Click anywhere outside closes context menu
+        document.addEventListener('mousedown', (e) => {
+            if (!e.target.closest('#editorContextMenu')) {
+                closeCustomContextMenu();
+            }
+        });
+    </script>
+</head>
+<body class="h-screen w-screen bg-white dark:bg-[#121214] text-zinc-800 dark:text-zinc-100 flex items-stretch justify-stretch p-0 m-0 overflow-hidden select-none selection:bg-zinc-900/10 dark:selection:bg-white/15 selection:text-zinc-950 dark:selection:text-white">
+
+    <!-- Main Flat Desktop Window -->
+    <section 
+        id="appWindow" 
+        class="relative w-full h-full bg-white dark:bg-[#121214] flex flex-col overflow-hidden shadow-[inset_0_0_0_1px_rgba(0,0,0,0.08)] dark:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]"
+    >
+        <!-- Desktop Window Title Bar (Header matching Image 1) -->
+        <header class="shrink-0 flex items-center justify-between px-4 sm:px-5 py-3 border-b border-zinc-100 dark:border-zinc-800/80 bg-white dark:bg-[#121214] select-none transition-colors duration-200">
+            <!-- Left: App Logo, Title & ADB Badge (revealed smoothly after splash) -->
+            <div id="headerLeft" class="flex items-center gap-2.5 min-w-0 opacity-100 transition-opacity duration-300">
+                <div class="shrink-0 w-7 h-7 rounded-lg overflow-hidden shadow-xs flex items-center justify-center bg-white dark:bg-zinc-800 border border-zinc-200/80 dark:border-zinc-700/80 p-0.5">
+                    <img src="app_icon.png" alt="Icon" class="w-full h-full object-contain rounded-md" onerror="this.src='app.ico'" />
+                </div>
+                <span id="appTitle" class="text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-100 whitespace-nowrap shrink-0">qq — ลงโค้ดไก่เวล</span>
+                <span class="hidden md:inline-block text-zinc-200 dark:text-zinc-700">|</span>
+                <div class="relative inline-flex items-center" id="adbContainer">
+                    <button 
+                        type="button" 
+                        id="adbStatusBtn" 
+                        onclick="toggleAdbMenu(event)"
+                        title="ADB Connection Settings"
+                        class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono font-medium bg-zinc-100 dark:bg-zinc-800/90 text-zinc-600 dark:text-zinc-300 border border-zinc-200/80 dark:border-zinc-700 hover:border-zinc-400 dark:hover:border-zinc-600 transition-all shrink-0 cursor-pointer shadow-xs active:scale-95"
+                    >
+                        <span id="adbDot" class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                        <span id="adbStatusText">ADB</span>
+                    </button>
+
+                    <div 
+                        id="adbPopover" 
+                        class="hidden absolute top-full left-0 mt-2 w-72 p-3 bg-white dark:bg-[#18181b] border border-zinc-200/90 dark:border-zinc-700 rounded-xl shadow-xl z-50 flex-col gap-2.5"
+                    >
+                        <div class="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-2">
+                            <span id="adbModalTitle" class="text-xs font-semibold text-zinc-800 dark:text-zinc-200">ตั้งค่าการเชื่อมต่อ ADB</span>
+                            <span id="adbDeviceName" class="text-[10px] text-zinc-400 font-mono">None</span>
+                        </div>
+                        <div class="flex flex-col gap-1.5">
+                            <label id="adbInputLabel" class="text-[11px] text-zinc-500 dark:text-zinc-400">พิมพ์ IP:Port (เช่น 127.0.0.1:5555)</label>
+                            <div class="flex items-center gap-1.5">
+                                <input 
+                                    type="text" 
+                                    id="customAdbInput" 
+                                    placeholder="127.0.0.1:5555" 
+                                    class="flex-1 px-2.5 py-1.5 text-xs font-mono bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-800 dark:text-zinc-200 focus:outline-none focus:border-zinc-900 dark:focus:border-zinc-300"
+                                />
+                                <button 
+                                    type="button" 
+                                    id="adbConnectBtn"
+                                    onclick="connectCustomAdb()" 
+                                    class="px-3 py-1.5 text-xs font-medium bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-lg hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors"
+                                >
+                                    เชื่อมต่อ
+                                </button>
+                            </div>
+                        </div>
+                        <div class="flex items-center justify-between pt-1 text-[11px] text-zinc-400">
+                            <button type="button" id="adbAutoScanBtn" onclick="autoDetectAdb()" class="hover:text-zinc-900 dark:hover:text-zinc-100 underline">สแกนหาพอร์ตอัตโนมัติ</button>
+                            <button type="button" id="adbCloseBtn" onclick="closeAdbPopover()" class="hover:text-zinc-900 dark:hover:text-zinc-100">ปิด</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right: Exact controls from Image 1: [GitHub] [Theme Toggle] [Language Dropdown] | [-] [X] -->
+            <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                <!-- GitHub Profile Button -->
+                <button 
+                    type="button" 
+                    id="topGithubBtn"
+                    onclick="openGithubProfile()" 
+                    title="GitHub" 
+                    aria-label="GitHub"
+                    class="w-8 h-8 rounded-lg flex items-center justify-center text-zinc-600 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-white bg-zinc-50 dark:bg-zinc-800/80 hover:bg-zinc-100 dark:hover:bg-zinc-700/80 border border-zinc-200/85 dark:border-zinc-700/80 hover:border-zinc-300 dark:hover:border-zinc-600 transition-colors active:scale-95"
+                >
+                    <svg class="w-3.5 h-3.5 text-zinc-700 dark:text-zinc-200" viewBox="0 0 24 24" fill="currentColor">
+                        <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"></path>
+                    </svg>
+                </button>
+
+                <!-- Dark / Light Theme Toggle Button -->
+                <button 
+                    type="button" 
+                    id="themeToggleBtn"
+                    onclick="toggleTheme()" 
+                    title="สลับธีมมืด / สว่าง" 
+                    aria-label="สลับธีมมืด / สว่าง"
+                    class="w-8 h-8 rounded-lg flex items-center justify-center text-zinc-600 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-white bg-zinc-50 dark:bg-zinc-800/80 hover:bg-zinc-100 dark:hover:bg-zinc-700/80 border border-zinc-200/85 dark:border-zinc-700/80 hover:border-zinc-300 dark:hover:border-zinc-600 transition-colors active:scale-95"
+                >
+                    <svg id="moonIcon" class="w-3.5 h-3.5 text-zinc-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                    <svg id="sunIcon" class="w-3.5 h-3.5 text-zinc-200 hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="5"></circle>
+                        <line x1="12" y1="1" x2="12" y2="3"></line>
+                        <line x1="12" y1="21" x2="12" y2="23"></line>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                        <line x1="1" y1="12" x2="3" y2="12"></line>
+                        <line x1="21" y1="12" x2="23" y2="12"></line>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                    </svg>
+                </button>
+
+                <!-- Language Dropdown (TH / EN) -->
+                <div class="relative" id="langDropdownContainer">
+                    <button 
+                        type="button" 
+                        id="langDropdownBtn"
+                        onclick="toggleLangDropdown(event)"
+                        aria-haspopup="true"
+                        aria-expanded="false"
+                        class="h-8 px-2.5 rounded-lg flex items-center gap-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:text-zinc-950 dark:hover:text-white bg-zinc-50 dark:bg-zinc-800/80 hover:bg-zinc-100 dark:hover:bg-zinc-700/80 border border-zinc-200/85 dark:border-zinc-700/80 hover:border-zinc-300 dark:hover:border-zinc-600 transition-colors active:scale-95"
+                    >
+                        <svg class="w-3.5 h-3.5 text-zinc-600 dark:text-zinc-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="2" y1="12" x2="22" y2="12"></line>
+                            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                        </svg>
+                        <span id="currentLangLabel">TH</span>
+                        <svg id="langChevron" class="w-3 h-3 text-zinc-400 transition-transform duration-150" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                    </button>
+
+                    <!-- Dropdown Menu -->
+                    <div 
+                        id="langDropdownMenu" 
+                        role="menu"
+                        class="hidden absolute right-0 mt-1.5 w-40 rounded-xl bg-white dark:bg-[#18181b] border border-zinc-200/90 dark:border-zinc-700 shadow-lg shadow-zinc-900/5 dark:shadow-black/50 py-1 z-50"
+                    >
+                        <button 
+                            type="button" 
+                            role="menuitem"
+                            onclick="setLanguage('TH')" 
+                            class="w-full px-3 py-2 text-left text-xs flex items-center justify-between text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100/80 dark:hover:bg-zinc-800 transition-colors"
+                        >
+                            <span class="font-medium">TH — ภาษาไทย</span>
+                            <svg id="checkTH" class="w-3.5 h-3.5 text-zinc-900 dark:text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                        </button>
+                        <button 
+                            type="button" 
+                            role="menuitem"
+                            onclick="setLanguage('EN')" 
+                            class="w-full px-3 py-2 text-left text-xs flex items-center justify-between text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100/80 dark:hover:bg-zinc-800 transition-colors"
+                        >
+                            <span class="font-medium">EN — English</span>
+                            <svg id="checkEN" class="w-3.5 h-3.5 text-zinc-900 dark:text-white hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <span class="h-4 w-px bg-zinc-200 dark:bg-zinc-700 mx-0.5"></span>
+
+                <!-- Window Minimize and Close -->
+                <div class="flex items-center gap-1">
+                    <button 
+                        type="button" 
+                        id="minimizeBtn"
+                        onclick="nativeMinimize()" 
+                        title="ย่อหน้าต่าง" 
+                        aria-label="ย่อหน้าต่าง"
+                        class="w-8 h-8 rounded-lg flex items-center justify-center text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors active:scale-95"
+                    >
+                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                    </button>
+
+                    <button 
+                        type="button" 
+                        id="closeBtn"
+                        onclick="nativeClose()" 
+                        title="ปิดโปรแกรม" 
+                        aria-label="ปิดโปรแกรม"
+                        class="w-8 h-8 rounded-lg flex items-center justify-center text-zinc-500 dark:text-zinc-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors active:scale-95"
+                    >
+                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Top Notification Toast -->
+        <div id="toast" class="pointer-events-none absolute top-[58px] left-1/2 -translate-x-1/2 z-50 transition-all duration-200 ease-out opacity-0 -translate-y-2 max-w-[92%]">
+            <div class="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/95 dark:bg-[#18181b]/95 backdrop-blur-md text-zinc-800 dark:text-zinc-100 text-xs font-medium border border-zinc-200/90 dark:border-zinc-700 shadow-md shadow-zinc-900/5 dark:shadow-black/40">
+                <svg id="toastIcon" class="w-3.5 h-3.5 text-zinc-900 dark:text-white shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+                <span id="toastMsg" class="truncate"></span>
+            </div>
+        </div>
+
+        <!-- ======================================================== -->
+        <!-- VIEW A: LOADING SPLASH SCREEN (Exact layout matching Image 2) -->
+        <!-- ======================================================== -->
+        <div id="splashView" class="flex-1 flex flex-col justify-between p-5 sm:p-7 bg-grid-pattern overflow-hidden select-none view-transition">
+            <!-- Top Spacing -->
+            <div></div>
+
+            <!-- Center Content: Logo, Title, and 4-Step Checklist Card -->
+            <div class="w-full max-w-md mx-auto flex flex-col items-center">
+                <!-- App Icon inside red box container from Image 2 -->
+                <div class="relative w-20 h-20 sm:w-22 sm:h-22 flex items-center justify-center">
+                    <!-- Concentric rings with subtle animation -->
+                    <div class="absolute inset-0 rounded-full border border-zinc-200/90 dark:border-zinc-800 border-dashed animate-[spin_12s_linear_infinite]"></div>
+                    <div class="absolute inset-1.5 rounded-full border border-zinc-300/70 dark:border-zinc-700/70"></div>
+                    <!-- Squircle container holding app.ico -->
+                    <div class="relative w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-white dark:bg-zinc-900 p-2 shadow-sm border border-zinc-200/80 dark:border-zinc-800 flex items-center justify-center overflow-hidden">
+                        <img src="app_icon.png" alt="App Icon" class="w-full h-full object-contain rounded-xl" onerror="this.src='app.ico'" />
+                    </div>
+                </div>
+
+                <!-- App Title -->
+                <h2 id="splashTitle" class="mt-3.5 text-center text-base sm:text-lg font-bold text-zinc-900 dark:text-zinc-100 tracking-tight">
+                    qq — ลงโค้ดไก่เวล
+                </h2>
+
+                <!-- Checklist / Step Log Card matching Image 2 -->
+                <div class="w-full mt-4 sm:mt-5 p-3.5 sm:p-4 rounded-2xl bg-white/90 dark:bg-[#18181b]/90 border border-zinc-200/90 dark:border-zinc-800/90 shadow-2xs backdrop-blur-md">
+                    <div class="relative flex flex-col gap-3.5 sm:gap-4">
+                        <!-- Vertical connector line on left -->
+                        <div class="absolute left-3.5 top-3.5 bottom-3.5 w-0.5 bg-zinc-200 dark:bg-zinc-800"></div>
+
+                        <!-- Step 1 -->
+                        <div id="step-1" class="relative flex items-center justify-between gap-3 z-10">
+                            <div class="flex items-center gap-3 min-w-0">
+                                <div class="step-icon shrink-0 w-7 h-7 rounded-full bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 flex items-center justify-center shadow-xs transition-colors duration-300">
+                                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                                        <polyline points="20 6 9 17 4 12"></polyline>
+                                    </svg>
+                                </div>
+                                <div class="flex flex-col min-w-0">
+                                    <span class="step-title text-xs sm:text-[13px] font-semibold text-zinc-900 dark:text-zinc-100 truncate">เริ่มต้นระบบหลักและไดรเวอร์</span>
+                                    <span class="step-sub text-[10px] sm:text-[11px] font-mono text-zinc-400 dark:text-zinc-500 truncate">core.runtime</span>
+                                </div>
+                            </div>
+                            <span class="step-badge px-2 py-0.5 text-[10px] font-mono font-medium rounded-md bg-zinc-200/80 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-300/60 dark:border-zinc-700/60">OK</span>
+                        </div>
+
+                        <!-- Step 2 -->
+                        <div id="step-2" class="relative flex items-center justify-between gap-3 z-10">
+                            <div class="flex items-center gap-3 min-w-0">
+                                <div class="step-icon shrink-0 w-7 h-7 rounded-full bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 flex items-center justify-center shadow-xs transition-colors duration-300">
+                                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                                        <polyline points="20 6 9 17 4 12"></polyline>
+                                    </svg>
+                                </div>
+                                <div class="flex flex-col min-w-0">
+                                    <span class="step-title text-xs sm:text-[13px] font-semibold text-zinc-600 dark:text-zinc-400 truncate">เชื่อมต่อ ADB และค้นหาอุปกรณ์</span>
+                                    <span id="step2Sub" class="step-sub text-[10px] sm:text-[11px] font-mono text-zinc-400 dark:text-zinc-500 truncate">adb · 127.0.0.1:5555</span>
+                                </div>
+                            </div>
+                            <span class="step-badge px-2 py-0.5 text-[10px] font-mono font-medium rounded-md bg-zinc-100 dark:bg-zinc-800/60 text-zinc-400 dark:text-zinc-500 border border-zinc-200/60 dark:border-zinc-700/40">WAIT</span>
+                        </div>
+
+                        <!-- Step 3 -->
+                        <div id="step-3" class="relative flex items-center justify-between gap-3 z-10">
+                            <div class="flex items-center gap-3 min-w-0">
+                                <div class="step-icon shrink-0 w-7 h-7 rounded-full bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 flex items-center justify-center shadow-xs transition-colors duration-300">
+                                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                                        <polyline points="20 6 9 17 4 12"></polyline>
+                                    </svg>
+                                </div>
+                                <div class="flex flex-col min-w-0">
+                                    <span class="step-title text-xs sm:text-[13px] font-semibold text-zinc-600 dark:text-zinc-400 truncate">ตรวจสอบสิทธิ์และเส้นทางไฟล์เกม</span>
+                                    <span class="step-sub text-[10px] sm:text-[11px] font-mono text-zinc-400 dark:text-zinc-500 truncate">fs.mount / sdcard</span>
+                                </div>
+                            </div>
+                            <span class="step-badge px-2 py-0.5 text-[10px] font-mono font-medium rounded-md bg-zinc-100 dark:bg-zinc-800/60 text-zinc-400 dark:text-zinc-500 border border-zinc-200/60 dark:border-zinc-700/40">WAIT</span>
+                        </div>
+
+                        <!-- Step 4 -->
+                        <div id="step-4" class="relative flex items-center justify-between gap-3 z-10">
+                            <div class="flex items-center gap-3 min-w-0">
+                                <div class="step-icon shrink-0 w-7 h-7 rounded-full bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 flex items-center justify-center shadow-xs transition-colors duration-300">
+                                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                                        <polyline points="20 6 9 17 4 12"></polyline>
+                                    </svg>
+                                </div>
+                                <div class="flex flex-col min-w-0">
+                                    <span class="step-title text-xs sm:text-[13px] font-semibold text-zinc-600 dark:text-zinc-400 truncate">เปิดหน้าต่างพื้นที่ทำงานหลัก</span>
+                                    <span class="step-sub text-[10px] sm:text-[11px] font-mono text-zinc-400 dark:text-zinc-500 truncate">workspace.ui</span>
+                                </div>
+                            </div>
+                            <span class="step-badge px-2 py-0.5 text-[10px] font-mono font-medium rounded-md bg-zinc-100 dark:bg-zinc-800/60 text-zinc-400 dark:text-zinc-500 border border-zinc-200/60 dark:border-zinc-700/40">WAIT</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bottom Progress Bar & Status Text matching Image 2 -->
+            <div class="w-full max-w-md mx-auto flex flex-col gap-2 pt-2">
+                <div class="flex items-center justify-between text-xs font-medium text-zinc-600 dark:text-zinc-300">
+                    <span id="splashStatusText" class="truncate font-sans mr-2">กำลังเตรียมระบบหลักและไดรเวอร์...</span>
+                    <div class="flex items-center gap-1.5 shrink-0">
+                        <span id="splashTimeEst" class="font-mono text-[11px] text-zinc-400 dark:text-zinc-500">เหลือ ~2.4s</span>
+                        <span class="text-zinc-300 dark:text-zinc-700">·</span>
+                        <span id="splashProgressPct" class="font-mono text-zinc-900 dark:text-zinc-100 font-semibold">10%</span>
+                    </div>
+                </div>
+                <div class="w-full h-1.5 sm:h-2 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden shadow-inner">
+                    <div id="splashProgressBar" class="h-full bg-zinc-900 dark:bg-zinc-100 rounded-full transition-all duration-300 ease-out" style="width: 10%"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ======================================================== -->
+        <!-- VIEW B: MAIN CODE EDITOR WORKSPACE (Fades in after splash) -->
+        <!-- ======================================================== -->
+        <div id="workspaceView" class="hidden opacity-0 scale-95 flex-1 flex flex-col min-h-0 overflow-hidden view-transition">
+            <!-- Center Area: Editor with Line Numbers -->
+            <div class="flex-1 px-4 sm:px-6 py-3 min-h-0 flex flex-col animate-card-stagger">
+                <div class="flex-1 flex flex-col min-h-0 rounded-2xl border border-zinc-200/90 dark:border-zinc-800 overflow-hidden shadow-2xs bg-white dark:bg-[#121214] transition-colors duration-200">
+                    
+                    <!-- Editor Top Utility Toolbar -->
+                    <div class="shrink-0 flex items-center justify-between px-3.5 py-2 border-b border-zinc-100 dark:border-zinc-800/80 bg-zinc-50/70 dark:bg-zinc-900/40 select-none">
+                        <div class="flex items-center gap-2">
+                            <span id="lineCharStats" class="font-mono text-xs text-zinc-400 dark:text-zinc-400 font-medium">1 บรรทัด · 0 ตัวอักษร</span>
+                        </div>
+
+                        <!-- Clear Button -->
+                        <button 
+                            type="button" 
+                            id="clearBtn"
+                            onclick="clearCode()" 
+                            title="ล้างโค้ด" 
+                            class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-zinc-400 dark:text-zinc-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors active:scale-95"
+                        >
+                            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                            <span id="clearBtnLabel">ล้างโค้ด</span>
+                        </button>
+                    </div>
+
+                    <!-- Compact UID Preview Card (Clean White Minimalist Theme) -->
+                    <div 
+                        id="uidPreviewCard" 
+                        class="hidden shrink-0 flex items-center justify-between px-4 py-2 bg-white dark:bg-[#121215] border-b border-zinc-100 dark:border-zinc-800/80 text-xs transition-all duration-200 select-none animate-workspace-enter"
+                    >
+                        <div class="flex items-center gap-1.5">
+                            <span id="previewUidLabel" class="text-[11px] font-semibold text-zinc-400 dark:text-zinc-500">UID:</span>
+                            <span id="previewUidText" class="font-mono font-bold text-xs text-zinc-800 dark:text-zinc-100 tracking-wider select-all"></span>
+                        </div>
+                        <div class="flex items-center gap-1.5 text-[11px]">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                            <span id="previewStatusLabel" class="text-zinc-400 dark:text-zinc-500">สถานะ:</span>
+                            <span id="previewStatusText" class="font-medium text-zinc-700 dark:text-zinc-300">โค้ดสมบูรณ์ พร้อมลงเกม</span>
+                        </div>
+                    </div>
+
+                    <!-- Code Textarea with Line Numbers -->
+                    <div class="relative flex-1 flex min-h-0 bg-white dark:bg-[#0d0d0f]">
+                        <div id="lineNumbers" aria-hidden="true" class="select-none py-4 pl-4 pr-3 text-right font-mono text-xs sm:text-sm leading-6 text-zinc-300 dark:text-zinc-600 bg-[#fafafa] dark:bg-[#111113] border-r border-zinc-100 dark:border-zinc-800/80 overflow-hidden">1</div>
+                        <textarea 
+                            id="codeEditor"
+                            spellcheck="false"
+                            placeholder='วางโค้ด {"guest_account_info":{"com.garena.msdk.guest_uid":"...","com.garena.msdk.guest_password":"..."}}'
+                            class="code-scroll flex-1 w-full h-full p-4 bg-transparent resize-none border-none outline-none font-mono text-xs sm:text-sm leading-6 text-zinc-800 dark:text-zinc-100 placeholder:font-mono placeholder:text-zinc-300 dark:placeholder:text-zinc-600 placeholder:text-xs sm:placeholder:text-sm"
+                        ></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bottom Action Bar (3 Buttons: วางโค้ด, ลงโค้ด, RESET GUEST) -->
+            <footer class="shrink-0 px-4 sm:px-6 pb-5 pt-1 bg-transparent transition-colors duration-200 animate-bottom-stagger">
+                <div class="grid grid-cols-12 gap-2.5 sm:gap-3">
+                    <!-- Button 1: วางโค้ด -->
+                    <button 
+                        type="button" 
+                        onclick="pasteFromClipboard()" 
+                        class="col-span-4 group flex items-center justify-center gap-2 py-3 px-3 rounded-xl bg-white dark:bg-[#18181b] hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-200 font-medium text-sm border border-zinc-200/90 dark:border-zinc-700/90 hover:border-zinc-400 dark:hover:border-zinc-600 shadow-2xs transition-all active:scale-[0.98]"
+                    >
+                        <svg class="w-4 h-4 text-zinc-700 dark:text-zinc-300 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+                            <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+                        </svg>
+                        <span id="pasteBtnLabel" class="truncate">วางโค้ด</span>
+                    </button>
+
+                    <!-- Button 2: ลงโค้ด -->
+                    <button 
+                        type="button" 
+                        id="submitBtn"
+                        onclick="deployCode()" 
+                        class="col-span-4 group flex items-center justify-center gap-2 py-3 px-3 rounded-xl bg-zinc-900 dark:bg-zinc-100 hover:bg-zinc-800 dark:hover:bg-white text-white dark:text-zinc-950 font-medium text-sm shadow-2xs transition-all active:scale-[0.98]"
+                    >
+                        <svg class="w-4 h-4 shrink-0 transition-transform group-hover:translate-x-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                            <polyline points="12 5 19 12 12 19"></polyline>
+                        </svg>
+                        <span id="submitBtnLabel" class="truncate font-semibold">ลงโค้ด</span>
+                    </button>
+
+                    <!-- Button 3: RESET GUEST -->
+                    <button 
+                        type="button" 
+                        id="resetGuestBtn"
+                        onclick="promptResetGuest()" 
+                        class="col-span-4 group flex items-center justify-center gap-2 py-3 px-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 font-semibold text-sm border border-rose-200/90 dark:border-rose-800/80 hover:border-rose-400 dark:hover:border-rose-600 shadow-2xs transition-all active:scale-[0.98]"
+                    >
+                        <svg class="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+                            <path d="M21 3v5h-5"></path>
+                            <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+                            <path d="M3 21v-5h5"></path>
+                        </svg>
+                        <span id="resetGuestBtnLabel" class="truncate">RESET GUEST</span>
+                    </button>
+                </div>
+            </footer>
+        </div>
+
+        <!-- Confirm Modal for Deploy Code -->
+        <div 
+            id="confirmModal" 
+            role="dialog"
+            aria-modal="true"
+            class="hidden fixed inset-0 z-50 bg-black/40 backdrop-blur-xs items-center justify-center p-4 transition-opacity"
+        >
+            <div class="w-full max-w-sm rounded-2xl bg-white dark:bg-[#18181b] p-5 shadow-2xl border border-zinc-200/80 dark:border-zinc-700/80 transform transition-all">
+                <div class="flex items-start gap-3.5">
+                    <div class="shrink-0 w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 border border-amber-200/80 dark:border-amber-800/80 flex items-center justify-center">
+                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path>
+                            <line x1="12" y1="9" x2="12" y2="13"></line>
+                            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                        </svg>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <h3 id="confirmModalTitle" class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">ยืนยันการลงโค้ดใหม่?</h3>
+                        <p id="confirmModalDesc" class="mt-1.5 text-xs leading-relaxed text-zinc-600 dark:text-zinc-300">
+                            หากดำเนินการต่อ <span class="font-semibold text-rose-600 dark:text-rose-400">โค้ดชุดเก่าจะถูกเขียนทับและหายไปถาวร</span> ไม่สามารถกู้คืนได้ คุณต้องการลงโค้ดนี้ใช่หรือไม่?
+                        </p>
+                    </div>
+                </div>
+
+                <div class="mt-5 flex items-center justify-end gap-2">
+                    <button 
+                        type="button" 
+                        id="confirmCancelBtn"
+                        onclick="closeConfirmModal()" 
+                        class="px-3.5 py-2 rounded-xl bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 text-xs font-medium border border-zinc-200/90 dark:border-zinc-700 transition-colors active:scale-95"
+                    >
+                        ยกเลิก
+                    </button>
+                    <button 
+                        type="button" 
+                        id="confirmProceedBtn"
+                        onclick="confirmDeployCode()" 
+                        class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-zinc-900 dark:bg-zinc-100 hover:bg-zinc-800 dark:hover:bg-white text-white dark:text-zinc-900 text-xs font-semibold shadow-xs transition-colors active:scale-95"
+                    >
+                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                        <span id="confirmProceedLabel">ยืนยันลงโค้ด</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Confirm Modal for RESET GUEST -->
+        <div 
+            id="resetConfirmModal" 
+            role="dialog"
+            aria-modal="true"
+            class="hidden fixed inset-0 z-50 bg-black/40 backdrop-blur-xs items-center justify-center p-4 transition-opacity"
+        >
+            <div class="w-full max-w-sm rounded-2xl bg-white dark:bg-[#18181b] p-5 shadow-2xl border border-zinc-200/80 dark:border-zinc-700/80 transform transition-all">
+                <div class="flex items-start gap-3.5">
+                    <div class="shrink-0 w-9 h-9 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200/80 dark:border-rose-800/80 flex items-center justify-center">
+                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+                            <path d="M21 3v5h-5"></path>
+                            <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+                            <path d="M3 21v-5h5"></path>
+                        </svg>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <h3 id="resetModalTitle" class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">ยืนยันรีเซ็ต Guest?</h3>
+                        <p id="resetModalDesc" class="mt-1.5 text-xs leading-relaxed text-zinc-600 dark:text-zinc-300">
+                            หากดำเนินการต่อ <span class="font-semibold text-rose-600 dark:text-rose-400">บัญชี Guest เดิมจะถูกลบออก</span> และเมื่อเปิดเกมจะเข้าสู่หน้าล็อกอินพร้อมสร้างบัญชี Guest ใหม่ให้ทันที (ทรัพยากรเกมคงอยู่ครบ 100%)
+                        </p>
+                    </div>
+                </div>
+
+                <div class="mt-5 flex items-center justify-end gap-2">
+                    <button 
+                        type="button" 
+                        id="resetCancelBtn"
+                        onclick="closeResetModal()" 
+                        class="px-3.5 py-2 rounded-xl bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-200 text-xs font-medium border border-zinc-200/90 dark:border-zinc-700 transition-colors active:scale-95"
+                    >
+                        ยกเลิก
+                    </button>
+                    <button 
+                        type="button" 
+                        id="resetProceedBtn"
+                        onclick="confirmResetGuest()" 
+                        class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold shadow-xs transition-colors active:scale-95"
+                    >
+                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                        <span id="resetProceedLabel">ยืนยันรีเซ็ต</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Client Script -->
+    <script>
+        const editor = document.getElementById('codeEditor');
+        const lineNumbers = document.getElementById('lineNumbers');
+        const lineCharStats = document.getElementById('lineCharStats');
+        const formatStatusDot = document.getElementById('formatStatusDot');
+        const formatStatusText = document.getElementById('formatStatusText');
+        const confirmModal = document.getElementById('confirmModal');
+        const langDropdownBtn = document.getElementById('langDropdownBtn');
+        const langDropdownMenu = document.getElementById('langDropdownMenu');
+        const langChevron = document.getElementById('langChevron');
+        const currentLangLabel = document.getElementById('currentLangLabel');
+        const checkTH = document.getElementById('checkTH');
+        const checkEN = document.getElementById('checkEN');
+        const moonIcon = document.getElementById('moonIcon');
+        const sunIcon = document.getElementById('sunIcon');
+        const toast = document.getElementById('toast');
+        const toastMsg = document.getElementById('toastMsg');
+        const toastIcon = document.getElementById('toastIcon');
+
+        let currentLang = 'TH';
+        let isDarkMode = false;
+
+        const i18n = {
+            TH: {
+                adbTitle: 'ตั้งค่าการเชื่อมต่อ ADB',
+                adbInputLabel: 'พิมพ์ IP:Port (เช่น 127.0.0.1:5555)',
+                adbConnect: 'เชื่อมต่อ',
+                adbScan: 'สแกนหาพอร์ตอัตโนมัติ',
+                adbClose: 'ปิด',
+                title: 'qq — ลงโค้ดไก่เวล',
+                placeholder: 'วางโค้ด {"guest_account_info":{"com.garena.msdk.guest_uid":"...","com.garena.msdk.guest_password":"..."}}',
+                clear: 'ล้างโค้ด',
+                pasteBtn: 'วางโค้ด',
+                submitBtn: 'ลงโค้ด',
+                minimize: 'ย่อหน้าต่าง',
+                close: 'ปิดโปรแกรม',
+                themeLight: 'เปลี่ยนเป็นธีมสว่าง',
+                themeDark: 'เปลี่ยนเป็นธีมมืด',
+                stats: (lines, chars) => `${lines} บรรทัด · ${chars} ตัวอักษร`,
+                statusWaiting: 'รองรับเฉพาะ Garena Guest JSON',
+                statusValid: 'รูปแบบโค้ดถูกต้อง (พร้อมลงโค้ด)',
+                statusInvalid: 'รูปแบบโค้ดไม่ถูกต้อง',
+                toastPasteSuccess: 'วางโค้ดสำเร็จ',
+                toastPasteShortcut: 'กด Ctrl+V หรือ Cmd+V เพื่อวางโค้ด',
+                toastInvalidFormat: 'รูปแบบไม่ถูกต้อง! รองรับเฉพาะโค้ด guest_account_info เท่านั้น',
+                toastClear: 'ล้างโค้ดเรียบร้อย',
+                toastEmptySubmit: 'กรุณาวางโค้ดก่อนลงโค้ด',
+                toastSubmitSuccess: 'ลงโค้ดสำเร็จ',
+                toastGithub: 'กำลังเปิด GitHub...',
+                modalTitle: 'ยืนยันการลงโค้ดใหม่?',
+                modalDesc: 'หากดำเนินการต่อ <span class="font-semibold text-rose-600 dark:text-rose-400">โค้ดชุดเก่าจะถูกเขียนทับและหายไปถาวร</span> ไม่สามารถกู้คืนได้ คุณต้องการลงโค้ดนี้ใช่หรือไม่?',
+                modalCancel: 'ยกเลิก',
+                modalProceed: 'ยืนยันลงโค้ด',
+                resetGuestBtn: 'RESET GUEST',
+                resetModalTitle: 'ยืนยันรีเซ็ต Guest?',
+                resetModalDesc: 'หากดำเนินการต่อ <span class="font-semibold text-rose-600 dark:text-rose-400">บัญชี Guest เดิมจะถูกลบออก</span> และเมื่อเปิดเกมจะเข้าสู่หน้าล็อกอินพร้อมสร้างบัญชี Guest ใหม่ให้ทันที (ทรัพยากรเกมคงอยู่ครบ 100%)',
+                resetModalCancel: 'ยกเลิก',
+                resetModalProceed: 'ยืนยันรีเซ็ต',
+                toastResetSuccess: 'รีเซ็ต Guest สำเร็จ! เกมเปิดขึ้นมาพร้อมล็อกอินที่หน้าแรกแล้ว',
+                splashStep1: 'เริ่มต้นระบบหลักและไดรเวอร์',
+                splashStep2: 'เชื่อมต่อ ADB และค้นหาอุปกรณ์',
+                splashStep3: 'ตรวจสอบสิทธิ์และเส้นทางไฟล์เกม',
+                splashStep4: 'เปิดหน้าต่างพื้นที่ทำงานหลัก',
+                splashStatusPrep: 'กำลังเตรียมระบบหลักและไดรเวอร์...',
+                splashStatusAdb: 'กำลังเชื่อมต่อ ADB...',
+                splashStatusFs: 'กำลังตรวจสอบเส้นทางไฟล์เกม...',
+                splashStatusUi: 'กำลังเปิดหน้าต่างพื้นที่ทำงานหลัก...',
+                splashStatusDone: 'เชื่อมต่อ ADB และระบบพร้อมใช้งานแล้ว',
+                ctxCut: 'ตัด',
+                ctxCopy: 'คัดลอก',
+                ctxPaste: 'วาง',
+                ctxSelectAll: 'เลือกทั้งหมด',
+                previewUidLabel: 'UID:',
+                previewStatusLabel: 'สถานะ:',
+                previewStatusReady: 'โค้ดสมบูรณ์ พร้อมลงเกม'
+            },
+            EN: {
+                adbTitle: 'ADB Connection Settings',
+                adbInputLabel: 'Enter IP:Port (e.g. 127.0.0.1:5555)',
+                adbConnect: 'Connect',
+                adbScan: 'Auto Scan Ports',
+                adbClose: 'Close',
+                title: 'qq — KaiVel Code Paste',
+                placeholder: 'Paste {"guest_account_info":{"com.garena.msdk.guest_uid":"...","com.garena.msdk.guest_password":"..."}}',
+                clear: 'Clear',
+                pasteBtn: 'Paste Code',
+                submitBtn: 'Submit Code',
+                minimize: 'Minimize',
+                close: 'Close',
+                themeLight: 'Switch to Light Mode',
+                themeDark: 'Switch to Dark Mode',
+                stats: (lines, chars) => `${lines} lines · ${chars} chars`,
+                statusWaiting: 'Garena Guest JSON Only',
+                statusValid: 'Valid Guest JSON Format',
+                statusInvalid: 'Invalid Code Format',
+                toastPasteSuccess: 'Code pasted successfully',
+                toastPasteShortcut: 'Press Ctrl+V or Cmd+V to paste code',
+                toastInvalidFormat: 'Invalid format! Only guest_account_info JSON is supported',
+                toastClear: 'Code cleared',
+                toastEmptySubmit: 'Please paste code before submitting',
+                toastSubmitSuccess: 'Code submitted successfully',
+                toastGithub: 'Opening GitHub...',
+                modalTitle: 'Confirm Code Deployment?',
+                modalDesc: 'If you proceed, <span class="font-semibold text-rose-600 dark:text-rose-400">the previous code will be overwritten and permanently lost</span>. Do you want to continue?',
+                modalCancel: 'Cancel',
+                modalProceed: 'Confirm Deploy',
+                resetGuestBtn: 'RESET GUEST',
+                resetModalTitle: 'Confirm Reset Guest?',
+                resetModalDesc: 'If you proceed, <span class="font-semibold text-rose-600 dark:text-rose-400">the current Guest account will be removed</span> and the game will open directly to the login screen ready to log in with a brand new Guest account (all game resources/contentcache remain 100% intact).',
+                resetModalCancel: 'Cancel',
+                resetModalProceed: 'Confirm Reset',
+                toastResetSuccess: 'Guest reset successful! Game is ready at the login screen.',
+                splashStep1: 'Initialize Core Runtime & Drivers',
+                splashStep2: 'Connect ADB & Detect Device',
+                splashStep3: 'Verify Game Path & Permissions',
+                splashStep4: 'Launch Main Workspace',
+                splashStatusPrep: 'Preparing core runtime & drivers...',
+                splashStatusAdb: 'Connecting ADB & locating device...',
+                splashStatusFs: 'Checking game storage & file paths...',
+                splashStatusUi: 'Opening main workspace UI...',
+                splashStatusDone: 'ADB connected & system ready to use',
+                ctxCut: 'Cut',
+                ctxCopy: 'Copy',
+                ctxPaste: 'Paste',
+                ctxSelectAll: 'Select All',
+                previewUidLabel: 'UID:',
+                previewStatusLabel: 'Status:',
+                previewStatusReady: 'Valid Code · Ready to Deploy'
+            }
+        };
+
+        // Theme Toggle Controls
+        function toggleTheme() {
+            isDarkMode = !isDarkMode;
+            applyTheme(isDarkMode);
+        }
+
+        function applyTheme(isDark) {
+            isDarkMode = isDark;
+            if (isDark) {
+                document.documentElement.classList.add('dark');
+                moonIcon.classList.add('hidden');
+                sunIcon.classList.remove('hidden');
+                const btn = document.getElementById('themeToggleBtn');
+                if (btn) btn.title = i18n[currentLang].themeLight;
+            } else {
+                document.documentElement.classList.remove('dark');
+                sunIcon.classList.add('hidden');
+                moonIcon.classList.remove('hidden');
+                const btn = document.getElementById('themeToggleBtn');
+                if (btn) btn.title = i18n[currentLang].themeDark;
+            }
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage({
+                    action: 'themeChanged',
+                    isDark: isDark
+                });
+            }
+        }
+
+        // Language Dropdown Controls
+        function toggleLangDropdown(event) {
+            event.stopPropagation();
+            closeAdbPopover();
+            const isExpanded = langDropdownBtn.getAttribute('aria-expanded') === 'true';
+            if (isExpanded) {
+                closeLangDropdown();
+            } else {
+                langDropdownMenu.classList.remove('hidden');
+                langChevron.classList.add('rotate-180');
+                langDropdownBtn.setAttribute('aria-expanded', 'true');
+            }
+        }
+
+        function closeLangDropdown() {
+            langDropdownMenu.classList.add('hidden');
+            langChevron.classList.remove('rotate-180');
+            langDropdownBtn.setAttribute('aria-expanded', 'false');
+        }
+
+        function setLanguage(lang) {
+            currentLang = lang;
+            const t = i18n[lang];
+
+            document.documentElement.lang = lang.toLowerCase();
+            document.title = t.title;
+            currentLangLabel.textContent = lang;
+
+            checkTH.classList.toggle('hidden', lang !== 'TH');
+            checkEN.classList.toggle('hidden', lang !== 'EN');
+
+            document.getElementById('appTitle').textContent = t.title;
+            const splashTitle = document.getElementById('splashTitle');
+            if (splashTitle) splashTitle.textContent = t.title;
+
+            editor.placeholder = t.placeholder;
+            document.getElementById('clearBtnLabel').textContent = t.clear;
+            document.getElementById('clearBtn').title = t.clear;
+            document.getElementById('pasteBtnLabel').textContent = t.pasteBtn;
+            document.getElementById('submitBtnLabel').textContent = t.submitBtn;
+            document.getElementById('confirmModalTitle').textContent = t.modalTitle;
+            document.getElementById('confirmModalDesc').innerHTML = t.modalDesc;
+            document.getElementById('confirmCancelBtn').textContent = t.modalCancel;
+            document.getElementById('confirmProceedLabel').textContent = t.modalProceed;
+
+            const minBtn = document.getElementById('minimizeBtn');
+            if (minBtn) {
+                minBtn.title = t.minimize;
+                minBtn.setAttribute('aria-label', t.minimize);
+            }
+            const clsBtn = document.getElementById('closeBtn');
+            if (clsBtn) {
+                clsBtn.title = t.close;
+                clsBtn.setAttribute('aria-label', t.close);
+            }
+
+            // Update ADB Popover texts
+            const elAdbTitle = document.getElementById('adbModalTitle');
+            if (elAdbTitle && t.adbTitle) elAdbTitle.textContent = t.adbTitle;
+            const elAdbLabel = document.getElementById('adbInputLabel');
+            if (elAdbLabel && t.adbInputLabel) elAdbLabel.textContent = t.adbInputLabel;
+            const elAdbConn = document.getElementById('adbConnectBtn');
+            if (elAdbConn && t.adbConn) elAdbConn.textContent = t.adbConnect;
+            const elAdbScan = document.getElementById('adbAutoScanBtn');
+            if (elAdbScan && t.adbScan) elAdbScan.textContent = t.adbScan;
+            const elAdbClose = document.getElementById('adbCloseBtn');
+            if (elAdbClose && t.adbClose) elAdbClose.textContent = t.adbClose;
+
+            // Update Splash texts & status
+            const s1 = document.querySelector('#step-1 .step-title');
+            if (s1 && t.splashStep1) s1.textContent = t.splashStep1;
+            const s2 = document.querySelector('#step-2 .step-title');
+            if (s2 && t.splashStep2) s2.textContent = t.splashStep2;
+            const s3 = document.querySelector('#step-3 .step-title');
+            if (s3 && t.splashStep3) s3.textContent = t.splashStep3;
+            const s4 = document.querySelector('#step-4 .step-title');
+            if (s4 && t.splashStep4) s4.textContent = t.splashStep4;
+
+            const pText = document.getElementById('splashStatusText');
+            if (pText) {
+                if (currentSplashStep === 1) pText.textContent = t.splashStatusPrep;
+                else if (currentSplashStep === 2) pText.textContent = t.splashStatusAdb;
+                else if (currentSplashStep === 3) pText.textContent = t.splashStatusFs;
+                else if (currentSplashStep === 4) pText.textContent = t.splashStatusUi;
+                else if (currentSplashStep >= 5) pText.textContent = t.splashStatusDone;
+            }
+
+            // Update Context Menu texts
+            const elCtxCut = document.getElementById('ctxCutLabel');
+            if (elCtxCut && t.ctxCut) elCtxCut.textContent = t.ctxCut;
+            const elCtxCopy = document.getElementById('ctxCopyLabel');
+            if (elCtxCopy && t.ctxCopy) elCtxCopy.textContent = t.ctxCopy;
+            const elCtxPaste = document.getElementById('ctxPasteLabel');
+            if (elCtxPaste && t.ctxPaste) elCtxPaste.textContent = t.ctxPaste;
+            const elCtxSel = document.getElementById('ctxSelectAllLabel');
+            if (elCtxSel && t.ctxSelectAll) elCtxSel.textContent = t.ctxSelectAll;
+
+            const elPrevUid = document.getElementById('previewUidLabel');
+            if (elPrevUid && t.previewUidLabel) elPrevUid.textContent = t.previewUidLabel;
+            const elPrevStatLbl = document.getElementById('previewStatusLabel');
+            if (elPrevStatLbl && t.previewStatusLabel) elPrevStatLbl.textContent = t.previewStatusLabel;
+            const elPrevStatTxt = document.getElementById('previewStatusText');
+            if (elPrevStatTxt && t.previewStatusReady) elPrevStatTxt.textContent = t.previewStatusReady;
+
+            // Update Reset Guest texts
+            const elResetBtn = document.getElementById('resetGuestBtnLabel');
+            if (elResetBtn && t.resetGuestBtn) elResetBtn.textContent = t.resetGuestBtn;
+            const elResetTitle = document.getElementById('resetModalTitle');
+            if (elResetTitle && t.resetModalTitle) elResetTitle.textContent = t.resetModalTitle;
+            const elResetDesc = document.getElementById('resetModalDesc');
+            if (elResetDesc && t.resetModalDesc) elResetDesc.innerHTML = t.resetModalDesc;
+            const elResetCancel = document.getElementById('resetCancelBtn');
+            if (elResetCancel && t.resetModalCancel) elResetCancel.textContent = t.resetModalCancel;
+            const elResetProceed = document.getElementById('resetProceedLabel');
+            if (elResetProceed && t.resetModalProceed) elResetProceed.textContent = t.resetModalProceed;
+
+            try {
+                localStorage.setItem('preferredLang', lang);
+            } catch (e) {}
+
+            closeLangDropdown();
+            updateEditorState();
+        }
+
+        // Line Numbers & Stats Sync
+        function updateEditorState() {
+            const t = i18n[currentLang];
+            const text = editor.value;
+            const lines = text.split('\n');
+            const lineCount = lines.length;
+
+            lineNumbers.innerHTML = Array.from({ length: lineCount }, (_, i) => i + 1).join('<br>');
+            lineCharStats.textContent = t.stats(lineCount, text.length);
+
+            const trimmed = text.trim();
+            const guestInfo = extractGuestInfo(trimmed);
+            const previewCard = document.getElementById('uidPreviewCard');
+            const previewUidText = document.getElementById('previewUidText');
+            const previewStatusText = document.getElementById('previewStatusText');
+
+            if (guestInfo) {
+                if (previewCard) previewCard.classList.remove('hidden');
+                if (previewUidText) previewUidText.textContent = guestInfo.uid;
+                if (previewStatusText) previewStatusText.textContent = t.previewStatusReady;
+            } else {
+                if (previewCard) previewCard.classList.add('hidden');
+            }
+            if (formatStatusDot && formatStatusText) {
+                if (trimmed.length === 0) {
+                    formatStatusDot.className = 'w-1.5 h-1.5 rounded-full bg-zinc-400';
+                    formatStatusText.textContent = t.statusWaiting;
+                    formatStatusText.className = 'text-xs font-mono text-zinc-500 dark:text-zinc-400';
+                } else if (isValidGuestAccountCode(trimmed)) {
+                    formatStatusDot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-500';
+                    formatStatusText.textContent = t.statusValid;
+                    formatStatusText.className = 'text-xs font-mono text-emerald-600 dark:text-emerald-400 font-medium';
+                } else {
+                    formatStatusDot.className = 'w-1.5 h-1.5 rounded-full bg-rose-500';
+                    formatStatusText.textContent = t.statusInvalid;
+                    formatStatusText.className = 'text-xs font-mono text-rose-600 dark:text-rose-400 font-medium';
+                }
+            }
+        }
+
+        // Synchronize scroll between textarea and line numbers
+        editor.addEventListener('scroll', () => {
+            lineNumbers.scrollTop = editor.scrollTop;
+        });
+        editor.addEventListener('input', updateEditorState);
+        editor.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            showCustomContextMenu(e.clientX, e.clientY);
+        });
+
+        // Extract Guest info from JSON
+        function extractGuestInfo(codeStr) {
+            try {
+                const parsed = JSON.parse(codeStr);
+                if (typeof parsed !== 'object' || parsed === null) return null;
+                const info = parsed.guest_account_info || parsed;
+                const uid = info['com.garena.msdk.guest_uid'];
+                const pwd = info['com.garena.msdk.guest_password'];
+                if (typeof uid === 'string' && uid.trim().length > 0 && typeof pwd === 'string' && pwd.trim().length > 0) {
+                    return { uid: uid.trim(), pwd: pwd.trim() };
+                }
+            } catch (e) {}
+            return null;
+        }
+
+        // Validation for Garena guest account JSON
+        function isValidGuestAccountCode(codeStr) {
+            try {
+                const parsed = JSON.parse(codeStr);
+                if (typeof parsed !== 'object' || parsed === null) return false;
+                const info = parsed.guest_account_info || parsed;
+                const uid = info['com.garena.msdk.guest_uid'];
+                const pwd = info['com.garena.msdk.guest_password'];
+                return typeof uid === 'string' && uid.length > 0 && typeof pwd === 'string' && pwd.length > 0;
+            } catch (e) {
+                return false;
+            }
+        }
+
+        // In-Window Toast Feedback
+        let toastTimer = null;
+        function showToast(message, type = 'info') {
+            clearTimeout(toastTimer);
+            toastMsg.textContent = message;
+
+            if (type === 'error') {
+                toastIcon.innerHTML = '<circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line>';
+                toastIcon.className = 'w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0';
+            } else if (type === 'success') {
+                toastIcon.innerHTML = '<polyline points="20 6 9 17 4 12"></polyline>';
+                toastIcon.className = 'w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0';
+            } else {
+                toastIcon.innerHTML = '<circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line>';
+                toastIcon.className = 'w-3.5 h-3.5 text-zinc-900 dark:text-white shrink-0';
+            }
+
+            toast.classList.remove('opacity-0', '-translate-y-2');
+            toast.classList.add('opacity-100', 'translate-y-0');
+
+            toastTimer = setTimeout(() => {
+                toast.classList.remove('opacity-100', 'translate-y-0');
+                toast.classList.add('opacity-0', '-translate-y-2');
+            }, 2600);
+        }
+
+        // Escape key closes modals/dropdowns
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeConfirmModal();
+                closeResetModal();
+                closeLangDropdown();
+                closeAdbPopover();
+            }
+        });
+
+        // Button 1: วางโค้ด (Paste from Clipboard)
+        function pasteFromClipboard() {
+            const t = i18n[currentLang];
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage({ action: 'getClipboard' });
+            } else if (navigator.clipboard && navigator.clipboard.readText) {
+                navigator.clipboard.readText().then(text => {
+                    handleDirectPastedText(text);
+                }).catch(() => {
+                    showToast(t.toastPasteShortcut, 'warning');
+                });
+            } else {
+                showToast(t.toastPasteShortcut, 'warning');
+            }
+        }
+
+        function handleDirectPastedText(text) {
+            const t = i18n[currentLang];
+            if (!text || !text.trim()) {
+                showToast(t.toastPasteShortcut, 'warning');
+                editor.focus();
+                return;
+            }
+            if (!isValidGuestAccountCode(text)) {
+                showToast(t.toastInvalidFormat, 'error');
+                return;
+            }
+            editor.value = text.trim();
+            updateEditorState();
+            editor.focus();
+            showToast(t.toastPasteSuccess, 'success');
+        }
+
+        // Clear code button
+        function clearCode() {
+            const t = i18n[currentLang];
+            editor.value = '';
+            updateEditorState();
+            editor.focus();
+            showToast(t.toastClear, 'info');
+        }
+
+        // Button 2: ลงโค้ด -> Open Confirmation Modal
+        function deployCode() {
+            const t = i18n[currentLang];
+            const rawCode = editor.value.trim();
+
+            if (!rawCode) {
+                showToast(t.toastEmptySubmit, 'warning');
+                editor.focus();
+                return;
+            }
+
+            if (!isValidGuestAccountCode(rawCode)) {
+                showToast(t.toastInvalidFormat, 'error');
+                editor.focus();
+                return;
+            }
+
+            confirmModal.classList.remove('hidden');
+            confirmModal.classList.add('flex');
+        }
+
+        function closeConfirmModal() {
+            confirmModal.classList.add('hidden');
+            confirmModal.classList.remove('flex');
+        }
+
+        function confirmDeployCode() {
+            const t = i18n[currentLang];
+            const rawCode = editor.value.trim();
+            closeConfirmModal();
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage({
+                    action: 'deploy',
+                    code: rawCode
+                });
+            } else {
+                showToast(t.toastSubmitSuccess, 'success');
+            }
+        }
+
+        // Button 3: RESET GUEST -> Open Confirmation Modal
+        function promptResetGuest() {
+            const resetModal = document.getElementById('resetConfirmModal');
+            if (resetModal) {
+                resetModal.classList.remove('hidden');
+                resetModal.classList.add('flex');
+            }
+        }
+
+        function closeResetModal() {
+            const resetModal = document.getElementById('resetConfirmModal');
+            if (resetModal) {
+                resetModal.classList.add('hidden');
+                resetModal.classList.remove('flex');
+            }
+        }
+
+        function confirmResetGuest() {
+            const t = i18n[currentLang];
+            closeResetModal();
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage({
+                    action: 'resetGuest'
+                });
+            } else {
+                showToast(t.toastResetSuccess, 'success');
+            }
+        }
+
+        // Top GitHub Profile Button (opens in default browser)
+        function openGithubProfile() {
+            const t = i18n[currentLang];
+            showToast(t.toastGithub, 'info');
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage({ action: 'openUrl', url: 'https://github.com/phwyverysad' });
+            } else {
+                window.open('https://github.com/phwyverysad', '_blank');
+            }
+        }
+
+        // Initialize state
+        updateEditorState();
+    </script>
+    <!-- Custom Editor Context Menu (Modern Web Style) -->
+    <div 
+        id="editorContextMenu" 
+        class="hidden fixed z-50 w-48 bg-white/95 dark:bg-[#18181b]/95 backdrop-blur-md rounded-xl border border-zinc-200/90 dark:border-zinc-800 shadow-2xl p-1.5 select-none transition-all duration-150 animate-workspace-enter"
+    >
+        <button 
+            type="button" 
+            onclick="ctxAction('cut')" 
+            class="w-full px-2.5 py-1.5 text-left text-xs font-medium rounded-lg flex items-center justify-between text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100/90 dark:hover:bg-zinc-800 transition-colors cursor-pointer group"
+        >
+            <div class="flex items-center gap-2">
+                <svg class="w-3.5 h-3.5 text-zinc-400 group-hover:text-zinc-700 dark:group-hover:text-zinc-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="6" cy="6" r="3"></circle>
+                    <circle cx="6" cy="18" r="3"></circle>
+                    <line x1="20" y1="4" x2="8.12" y2="15.88"></line>
+                    <line x1="14.47" y1="14.48" x2="20" y2="20"></line>
+                    <line x1="8.12" y1="8.12" x2="12" y2="12"></line>
+                </svg>
+                <span id="ctxCutLabel">ตัด</span>
+            </div>
+            <kbd class="text-[10px] font-mono font-medium text-zinc-400 dark:text-zinc-500 bg-zinc-100 dark:bg-zinc-800/80 px-1.5 py-0.5 rounded border border-zinc-200/60 dark:border-zinc-700/60">Ctrl+X</kbd>
+        </button>
+
+        <button 
+            type="button" 
+            onclick="ctxAction('copy')" 
+            class="w-full px-2.5 py-1.5 text-left text-xs font-medium rounded-lg flex items-center justify-between text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100/90 dark:hover:bg-zinc-800 transition-colors cursor-pointer group"
+        >
+            <div class="flex items-center gap-2">
+                <svg class="w-3.5 h-3.5 text-zinc-400 group-hover:text-zinc-700 dark:group-hover:text-zinc-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+                <span id="ctxCopyLabel">คัดลอก</span>
+            </div>
+            <kbd class="text-[10px] font-mono font-medium text-zinc-400 dark:text-zinc-500 bg-zinc-100 dark:bg-zinc-800/80 px-1.5 py-0.5 rounded border border-zinc-200/60 dark:border-zinc-700/60">Ctrl+C</kbd>
+        </button>
+
+        <button 
+            type="button" 
+            onclick="ctxAction('paste')" 
+            class="w-full px-2.5 py-1.5 text-left text-xs font-medium rounded-lg flex items-center justify-between text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100/90 dark:hover:bg-zinc-800 transition-colors cursor-pointer group"
+        >
+            <div class="flex items-center gap-2">
+                <svg class="w-3.5 h-3.5 text-zinc-400 group-hover:text-zinc-700 dark:group-hover:text-zinc-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+                    <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+                </svg>
+                <span id="ctxPasteLabel">วาง</span>
+            </div>
+            <kbd class="text-[10px] font-mono font-medium text-zinc-400 dark:text-zinc-500 bg-zinc-100 dark:bg-zinc-800/80 px-1.5 py-0.5 rounded border border-zinc-200/60 dark:border-zinc-700/60">Ctrl+V</kbd>
+        </button>
+
+        <div class="h-px bg-zinc-100 dark:bg-zinc-800 my-1"></div>
+
+        <button 
+            type="button" 
+            onclick="ctxAction('selectAll')" 
+            class="w-full px-2.5 py-1.5 text-left text-xs font-medium rounded-lg flex items-center justify-between text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100/90 dark:hover:bg-zinc-800 transition-colors cursor-pointer group"
+        >
+            <div class="flex items-center gap-2">
+                <svg class="w-3.5 h-3.5 text-zinc-400 group-hover:text-zinc-700 dark:group-hover:text-zinc-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="4 7 4 4 7 4"></polyline>
+                    <line x1="9" y1="20" x2="15" y2="20"></line>
+                    <line x1="20" y1="9" x2="20" y2="15"></line>
+                    <polyline points="20 4 17 4 20 7"></polyline>
+                    <polyline points="4 17 4 20 7 20"></polyline>
+                    <polyline points="20 17 20 20 17 20"></polyline>
+                </svg>
+                <span id="ctxSelectAllLabel">เลือกทั้งหมด</span>
+            </div>
+            <kbd class="text-[10px] font-mono font-medium text-zinc-400 dark:text-zinc-500 bg-zinc-100 dark:bg-zinc-800/80 px-1.5 py-0.5 rounded border border-zinc-200/60 dark:border-zinc-700/60">Ctrl+A</kbd>
+        </button>
+    </div>
+</body>
+</html>
