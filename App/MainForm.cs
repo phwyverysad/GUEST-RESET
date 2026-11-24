@@ -23,6 +23,7 @@ namespace GuestResetApp
         private string activeDevice = "";
         private bool isAdbConnected = false;
         private bool isCheckingAdb = false;
+        private string currentAppLang = "TH";
 
         // AoB Pattern for GUEST RESET
         private static readonly byte[] SEARCH_AOB = new byte[]
@@ -157,7 +158,8 @@ namespace GuestResetApp
             try
             {
                 string userDataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "GuestResetApp_WebView2");
-                var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder);
+                var options = new CoreWebView2EnvironmentOptions(Environment.GetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"));
+                var env = await CoreWebView2Environment.CreateAsync(null, userDataFolder, options);
                 await webView.EnsureCoreWebView2Async(env);
 
                 webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
@@ -266,7 +268,10 @@ namespace GuestResetApp
                                 if (root.TryGetProperty("target", out var targetProp))
                                 {
                                     string target = targetProp.GetString() ?? "";
-                                    _ = ConnectCustomAdbAsync(target);
+                                    string lang = currentAppLang;
+                                    if (root.TryGetProperty("lang", out var lProp))
+                                        lang = lProp.GetString() ?? currentAppLang;
+                                    _ = ConnectCustomAdbAsync(target, lang);
                                 }
                                 break;
                             case "getClipboard":
@@ -277,15 +282,29 @@ namespace GuestResetApp
                                 }
                                 SendClipboardTextToWeb(clipText);
                                 break;
+                            case "langChanged":
+                                if (root.TryGetProperty("lang", out var langP))
+                                {
+                                    currentAppLang = langP.GetString() ?? "TH";
+                                }
+                                break;
                             case "deploy":
                                 if (root.TryGetProperty("code", out var codeProp))
                                 {
                                     string code = codeProp.GetString() ?? "";
-                                    _ = HandleDeployCodeAsync(code);
+                                    string lang = currentAppLang;
+                                    if (root.TryGetProperty("lang", out var lProp))
+                                        lang = lProp.GetString() ?? currentAppLang;
+                                    _ = HandleDeployCodeAsync(code, lang);
                                 }
                                 break;
                             case "resetGuest":
-                                _ = HandleResetGuestAsync();
+                                {
+                                    string lang = currentAppLang;
+                                    if (root.TryGetProperty("lang", out var lProp))
+                                        lang = lProp.GetString() ?? currentAppLang;
+                                    _ = HandleResetGuestAsync(lang);
+                                }
                                 break;
                             case "themeChanged":
                                 if (root.TryGetProperty("isDark", out var isDarkProp))
@@ -525,7 +544,7 @@ namespace GuestResetApp
             });
         }
 
-        private async Task ConnectCustomAdbAsync(string target)
+        private async Task ConnectCustomAdbAsync(string target, string lang)
         {
             await Task.Run(() =>
             {
@@ -535,12 +554,14 @@ namespace GuestResetApp
                 string outStr = NativeAdb.Connect(target);
                 if (outStr.Contains("connected") && !outStr.Contains("cannot"))
                 {
-                    SendToastToWeb($"เชื่อมต่อ ADB: {target} สำเร็จ!", "success");
+                    string successMsg = lang == "EN" ? $"Connected to ADB: {target} successfully!" : $"เชื่อมต่อ ADB: {target} สำเร็จ!";
+                    SendToastToWeb(successMsg, "success");
                     SetAdbStatus(true, target);
                 }
                 else
                 {
-                    SendToastToWeb($"เชื่อมต่อ ADB: {target} ไม่สำเร็จ ({outStr.Trim()})", "error");
+                    string failMsg = lang == "EN" ? $"Failed to connect ADB: {target} ({outStr.Trim()})" : $"เชื่อมต่อ ADB: {target} ไม่สำเร็จ ({outStr.Trim()})";
+                    SendToastToWeb(failMsg, "error");
                     _ = CheckAdbConnectionAsync();
                 }
             });
@@ -567,14 +588,15 @@ namespace GuestResetApp
             }));
         }
 
-        private async Task HandleResetGuestAsync()
+        private async Task HandleResetGuestAsync(string lang)
         {
             bool success = await Task.Run(() =>
             {
                 string adbPath = FindAdb();
                 NativeAdb.EnsureServerRunning(adbPath);
 
-                if (string.IsNullOrEmpty(activeDevice) || !isAdbConnected)
+                string dev = NativeAdb.ResolveActiveDevice(activeDevice);
+                if (string.IsNullOrEmpty(dev))
                 {
                     var ports = GetActiveEmulatorAdbPorts();
                     foreach (var port in ports)
@@ -582,14 +604,15 @@ namespace GuestResetApp
                         string cOut = NativeAdb.Connect(port);
                         if (cOut.Contains("connected") && !cOut.Contains("cannot"))
                         {
-                            activeDevice = port;
-                            isAdbConnected = true;
+                            dev = port;
                             break;
                         }
                     }
                 }
 
-                if (string.IsNullOrEmpty(activeDevice)) return false;
+                if (string.IsNullOrEmpty(dev)) return false;
+                activeDevice = dev;
+                isAdbConnected = true;
 
                 try
                 {
@@ -600,18 +623,20 @@ namespace GuestResetApp
                     // 2. Wipe all login & guest tokens via root using sh -c (wildcard expansion)
                     NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 sh -c 'rm -f /data/data/com.dts.freefireth/shared_prefs/com.garena.msdk* /data/data/com.dts.freefiremax/shared_prefs/com.garena.msdk* /data/data/com.dts.freefireth/shared_prefs/com.facebook.loginManager* /data/data/com.dts.freefireth/shared_prefs/com.facebook.AccessToken* /data/data/com.dts.freefireth/shared_prefs/com.google.android.gms.signin*'");
 
-                    // 3. Delete accounts from system accounts SQLite DB via root using sh -c
-                    NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 sh -c \"sqlite3 /data/system_ce/0/accounts_ce.db 'DELETE FROM accounts WHERE type LIKE \'%garena%\';'\"");
-                    NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 sh -c \"sqlite3 /data/system_de/0/accounts_de.db 'DELETE FROM accounts WHERE type LIKE \'%garena%\';'\"");
+                    // 3. Delete accounts from system accounts SQLite DB via root without syntax errors
+                    NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 sqlite3 /data/system_ce/0/accounts_ce.db \"DELETE FROM accounts;\"");
+                    NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 sqlite3 /data/system_de/0/accounts_de.db \"DELETE FROM accounts;\"");
 
                     // 4. Randomize device android_id
                     string randomId = Guid.NewGuid().ToString("N").Substring(0, 16);
                     NativeAdb.ExecuteShell(activeDevice, $"settings put secure android_id {randomId}");
 
-                    // 5. Remove sdcard guest files (contentcache and game assets remain 100% untouched)
+                    // 5. Remove sdcard and internal guest files (contentcache and game assets remain 100% untouched)
                     NativeAdb.ExecuteShell(activeDevice, "rm -f /sdcard/com.garena.msdk/guest100067.dat");
                     NativeAdb.ExecuteShell(activeDevice, "rm -f /sdcard/Android/data/com.dts.freefireth/files/guest100067.dat");
                     NativeAdb.ExecuteShell(activeDevice, "rm -f /sdcard/Android/data/com.dts.freefiremax/files/guest100067.dat");
+                    NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 rm -f /data/data/com.dts.freefireth/files/guest100067.dat");
+                    NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 rm -f /data/data/com.dts.freefiremax/files/guest100067.dat");
 
                     return true;
                 }
@@ -623,7 +648,8 @@ namespace GuestResetApp
 
             if (success)
             {
-                SendToastToWeb("รีเซ็ต Guest สำเร็จ! กำลังเปิดเกม Free Fire...", "success");
+                string successMsg = lang == "EN" ? "Guest reset successfully! Launching Free Fire..." : "รีเซ็ต Guest สำเร็จ! กำลังเปิดเกม Free Fire...";
+                SendToastToWeb(successMsg, "success");
 
                 // Auto launch Free Fire
                 await Task.Delay(1000);
@@ -639,7 +665,8 @@ namespace GuestResetApp
                         int count = ApplyMemoryPatch();
                         if (count > 0)
                         {
-                            SendToastToWeb($"แพตช์ Guest สำเร็จ ({count} จุด)! กด Guest เพื่อสร้างรหัสใหม่ได้เลย", "success");
+                            string patchMsg = lang == "EN" ? $"Guest patched successfully ({count} offsets)! Press Guest to create account." : $"แพตช์ Guest สำเร็จ ({count} จุด)! กด Guest เพื่อสร้างรหัสใหม่ได้เลย";
+                            SendToastToWeb(patchMsg, "success");
                             break;
                         }
                     }
@@ -647,11 +674,12 @@ namespace GuestResetApp
             }
             else
             {
-                SendToastToWeb("ไม่พบ Emulator หรือยังไม่ได้เชื่อมต่อ ADB", "error");
+                string errMsg = lang == "EN" ? "Emulator not found or ADB disconnected" : "ไม่พบ Emulator หรือยังไม่ได้เชื่อมต่อ ADB";
+                SendToastToWeb(errMsg, "error");
             }
         }
 
-        private async Task HandleDeployCodeAsync(string guestJson)
+        private async Task HandleDeployCodeAsync(string guestJson, string lang)
         {
             bool success = await Task.Run(() =>
             {
@@ -660,36 +688,25 @@ namespace GuestResetApp
 
             if (success)
             {
-                SendToastToWeb("ลงโค้ดสำเร็จ! กำลังเปิดเกม Free Fire...", "success");
+                string successMsg = lang == "EN" ? "Code deployed successfully! Launching Free Fire..." : "ลงโค้ดสำเร็จ! กำลังเปิดเกม Free Fire...";
+                SendToastToWeb(successMsg, "success");
 
                 // Auto launch Free Fire
                 await Task.Delay(1000);
                 NativeAdb.ExecuteShell(activeDevice, "monkey -p com.dts.freefireth -c android.intent.category.LAUNCHER 1");
                 NativeAdb.ExecuteShell(activeDevice, "monkey -p com.dts.freefiremax -c android.intent.category.LAUNCHER 1");
-
-                // Execute AoB Memory Hook with polling so it catches the game libraries as soon as loaded
-                _ = Task.Run(async () =>
-                {
-                    for (int attempt = 0; attempt < 25; attempt++)
-                    {
-                        await Task.Delay(1000);
-                        int count = ApplyMemoryPatch();
-                        if (count > 0)
-                        {
-                            break;
-                        }
-                    }
-                });
             }
             else
             {
-                SendToastToWeb("ไม่พบ Emulator หรือยังไม่ได้เชื่อมต่อ ADB", "error");
+                string errMsg = lang == "EN" ? "Emulator not found or ADB disconnected" : "ไม่พบ Emulator หรือยังไม่ได้เชื่อมต่อ ADB";
+                SendToastToWeb(errMsg, "error");
             }
         }
 
         private bool DeployGuestCodeToEmulator(string guestJson)
         {
-            if (string.IsNullOrEmpty(activeDevice) || !isAdbConnected)
+            string dev = NativeAdb.ResolveActiveDevice(activeDevice);
+            if (string.IsNullOrEmpty(dev))
             {
                 var ports = GetActiveEmulatorAdbPorts();
                 foreach (var port in ports)
@@ -697,14 +714,15 @@ namespace GuestResetApp
                     string cOut = NativeAdb.Connect(port);
                     if (cOut.Contains("connected") && !cOut.Contains("cannot"))
                     {
-                        activeDevice = port;
-                        isAdbConnected = true;
+                        dev = port;
                         break;
                     }
                 }
             }
 
-            if (string.IsNullOrEmpty(activeDevice)) return false;
+            if (string.IsNullOrEmpty(dev)) return false;
+            activeDevice = dev;
+            isAdbConnected = true;
 
             try
             {
@@ -716,6 +734,8 @@ namespace GuestResetApp
                 NativeAdb.WriteFileViaBase64(activeDevice, "/sdcard/com.garena.msdk/guest100067.dat", guestJson.Trim());
                 NativeAdb.WriteFileViaBase64(activeDevice, "/sdcard/Android/data/com.dts.freefireth/files/guest100067.dat", guestJson.Trim());
                 NativeAdb.WriteFileViaBase64(activeDevice, "/sdcard/Android/data/com.dts.freefiremax/files/guest100067.dat", guestJson.Trim());
+                NativeAdb.WriteFileViaBase64(activeDevice, "/data/data/com.dts.freefireth/files/guest100067.dat", guestJson.Trim());
+                NativeAdb.WriteFileViaBase64(activeDevice, "/data/data/com.dts.freefiremax/files/guest100067.dat", guestJson.Trim());
 
                 return true;
             }
@@ -761,8 +781,7 @@ namespace GuestResetApp
                                            ((mbi.Protect & 0x01) == 0) &&
                                            ((mbi.Protect & 0x04) != 0 || // PAGE_READWRITE
                                             (mbi.Protect & 0x40) != 0 || // PAGE_EXECUTE_READWRITE
-                                            (mbi.Protect & 0x20) != 0 || // PAGE_EXECUTE_READ
-                                            (mbi.Protect & 0x02) != 0);   // PAGE_READONLY
+                                            (mbi.Protect & 0x20) != 0);   // PAGE_EXECUTE_READ
 
                         if (isScannable && regionSize > 0)
                         {
@@ -1047,6 +1066,24 @@ namespace GuestResetApp
             return devices;
         }
 
+        public static string ResolveActiveDevice(string preferred)
+        {
+            var devices = GetDevices();
+            if (devices.Count == 0)
+            {
+                Connect("127.0.0.1:5555");
+                devices = GetDevices();
+            }
+            if (devices.Count == 0) return "";
+            if (!string.IsNullOrEmpty(preferred) && devices.Contains(preferred))
+            {
+                return preferred;
+            }
+            var tcpDev = devices.Find(d => d.StartsWith("127.0.0.1:"));
+            if (!string.IsNullOrEmpty(tcpDev)) return tcpDev;
+            return devices[0];
+        }
+
         public static string Connect(string target, int timeoutMs = 2500)
         {
             try
@@ -1076,11 +1113,28 @@ namespace GuestResetApp
 
         public static string ExecuteShell(string device, string cmd, int timeoutMs = 5000)
         {
+            string target = !string.IsNullOrEmpty(device) ? device : ResolveActiveDevice("");
+            if (string.IsNullOrEmpty(target)) return "";
+
+            string? res = ExecuteShellInternal(target, cmd, timeoutMs);
+            if (res == null)
+            {
+                string alt = ResolveActiveDevice(target == "127.0.0.1:5555" ? "emulator-5554" : "127.0.0.1:5555");
+                if (!string.IsNullOrEmpty(alt) && alt != target)
+                {
+                    res = ExecuteShellInternal(alt, cmd, timeoutMs);
+                }
+            }
+            return res ?? "";
+        }
+
+        private static string? ExecuteShellInternal(string device, string cmd, int timeoutMs)
+        {
             try
             {
                 using var client = new TcpClient();
                 var ar = client.BeginConnect(HOST, PORT, null, null);
-                if (!ar.AsyncWaitHandle.WaitOne(timeoutMs)) return "";
+                if (!ar.AsyncWaitHandle.WaitOne(timeoutMs)) return null;
                 client.EndConnect(ar);
 
                 using var stream = client.GetStream();
@@ -1089,18 +1143,18 @@ namespace GuestResetApp
 
                 SendRequest(stream, $"host:transport:{device}");
                 string status = ReadStatus(stream);
-                if (status != "OKAY") return "";
+                if (status != "OKAY") return null;
 
                 SendRequest(stream, $"shell:{cmd}");
                 string shellStatus = ReadStatus(stream);
-                if (shellStatus != "OKAY") return "";
+                if (shellStatus != "OKAY") return null;
 
                 using var reader = new StreamReader(stream, Encoding.UTF8);
                 return reader.ReadToEnd();
             }
             catch
             {
-                return "";
+                return null;
             }
         }
 
@@ -1108,10 +1162,20 @@ namespace GuestResetApp
         {
             try
             {
-                string b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(content));
+                string b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(content.Trim()));
                 string dir = Path.GetDirectoryName(remotePath)?.Replace('\\', '/') ?? "";
-                string cmd = $"mkdir -p \"{dir}\" && sh -c 'echo \"{b64}\" | base64 -d > \"{remotePath}\"'";
-                ExecuteShell(device, cmd, timeoutMs);
+                
+                // 1. mkdir
+                ExecuteShell(device, $"mkdir -p \"{dir}\"", timeoutMs);
+                ExecuteShell(device, $"/system/xbin/bstk/su 0 mkdir -p \"{dir}\"", timeoutMs);
+
+                // 2. Decode base64 directly without quote nesting issues
+                ExecuteShell(device, $"sh -c 'echo {b64} | base64 -d > \"{remotePath}\"'", timeoutMs);
+                ExecuteShell(device, $"/system/xbin/bstk/su 0 sh -c 'echo {b64} | base64 -d > \"{remotePath}\"'", timeoutMs);
+
+                // 3. Ensure permissions
+                ExecuteShell(device, $"chmod 666 \"{remotePath}\"", timeoutMs);
+                ExecuteShell(device, $"/system/xbin/bstk/su 0 chmod 666 \"{remotePath}\"", timeoutMs);
                 return true;
             }
             catch

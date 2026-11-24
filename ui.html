@@ -1267,7 +1267,7 @@
             const elAdbLabel = document.getElementById('adbInputLabel');
             if (elAdbLabel && t.adbInputLabel) elAdbLabel.textContent = t.adbInputLabel;
             const elAdbConn = document.getElementById('adbConnectBtn');
-            if (elAdbConn && t.adbConn) elAdbConn.textContent = t.adbConnect;
+            if (elAdbConn && t.adbConnect) elAdbConn.textContent = t.adbConnect;
             const elAdbScan = document.getElementById('adbAutoScanBtn');
             if (elAdbScan && t.adbScan) elAdbScan.textContent = t.adbScan;
             const elAdbClose = document.getElementById('adbCloseBtn');
@@ -1324,6 +1324,13 @@
             try {
                 localStorage.setItem('preferredLang', lang);
             } catch (e) {}
+
+            if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage({
+                    action: 'langChanged',
+                    lang: lang
+                });
+            }
 
             closeLangDropdown();
             updateEditorState();
@@ -1520,7 +1527,8 @@
             if (window.chrome && window.chrome.webview) {
                 window.chrome.webview.postMessage({
                     action: 'deploy',
-                    code: rawCode
+                    code: rawCode,
+                    lang: currentLang
                 });
             } else {
                 showToast(t.toastSubmitSuccess, 'success');
@@ -1549,7 +1557,8 @@
             closeResetModal();
             if (window.chrome && window.chrome.webview) {
                 window.chrome.webview.postMessage({
-                    action: 'resetGuest'
+                    action: 'resetGuest',
+                    lang: currentLang
                 });
             } else {
                 showToast(t.toastResetSuccess, 'success');
