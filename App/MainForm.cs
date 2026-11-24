@@ -638,9 +638,15 @@ namespace GuestResetApp
                     NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 rm -f /data/data/com.dts.freefireth/files/guest100067.dat");
                     NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 rm -f /data/data/com.dts.freefiremax/files/guest100067.dat");
 
-                    // 6. Reload Android OS AccountManager cache by restarting system_server
-                    NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 killall -9 system_server");
-                    System.Threading.Thread.Sleep(3500);
+                    // 6. Remove LASTLOGIN_SUCCESSFULL to ensure game lands cleanly on Title/Login screen
+                    NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 sh -c 'grep -v LASTLOGIN_SUCCESSFULL /data/data/com.dts.freefireth/shared_prefs/com.dts.freefireth.v2.playerprefs.xml > /data/data/com.dts.freefireth/shared_prefs/pp.tmp && mv /data/data/com.dts.freefireth/shared_prefs/pp.tmp /data/data/com.dts.freefireth/shared_prefs/com.dts.freefireth.v2.playerprefs.xml && chmod 660 /data/data/com.dts.freefireth/shared_prefs/com.dts.freefireth.v2.playerprefs.xml && chown u0_a62:u0_a62 /data/data/com.dts.freefireth/shared_prefs/com.dts.freefireth.v2.playerprefs.xml'");
+                    NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 sh -c 'grep -v LASTLOGIN_SUCCESSFULL /data/data/com.dts.freefiremax/shared_prefs/com.dts.freefiremax.v2.playerprefs.xml > /data/data/com.dts.freefiremax/shared_prefs/pp.tmp && mv /data/data/com.dts.freefiremax/shared_prefs/pp.tmp /data/data/com.dts.freefiremax/shared_prefs/com.dts.freefiremax.v2.playerprefs.xml && chmod 660 /data/data/com.dts.freefiremax/shared_prefs/com.dts.freefiremax.v2.playerprefs.xml && chown u0_a62:u0_a62 /data/data/com.dts.freefiremax/shared_prefs/com.dts.freefiremax.v2.playerprefs.xml'");
+
+                    // 7. Reload Android OS AccountManager cache by restarting system_server and reconnecting
+                    NativeAdb.RestartSystemServerAndReconnect(activeDevice);
+
+                    // 8. Launch Free Fire and ensure foreground focus
+                    NativeAdb.LaunchAndEnsureGameFocus(activeDevice);
 
                     return true;
                 }
@@ -652,13 +658,8 @@ namespace GuestResetApp
 
             if (success)
             {
-                string successMsg = lang == "EN" ? "Guest reset successfully! Launching Free Fire..." : "รีเซ็ต Guest สำเร็จ! กำลังเปิดเกม Free Fire...";
+                string successMsg = lang == "EN" ? "Guest reset successfully! Free Fire is launching to login screen..." : "รีเซ็ต Guest สำเร็จ! เกมเปิดไปที่หน้าล็อกอินแล้ว...";
                 SendToastToWeb(successMsg, "success");
-
-                // Auto launch Free Fire
-                await Task.Delay(1000);
-                NativeAdb.ExecuteShell(activeDevice, "monkey -p com.dts.freefireth -c android.intent.category.LAUNCHER 1");
-                NativeAdb.ExecuteShell(activeDevice, "monkey -p com.dts.freefiremax -c android.intent.category.LAUNCHER 1");
 
                 // Execute AoB Memory Hook with polling so it catches the game libraries as soon as loaded
                 _ = Task.Run(async () =>
@@ -692,26 +693,8 @@ namespace GuestResetApp
 
             if (success)
             {
-                string successMsg = lang == "EN" ? "Code deployed successfully! Auto-logging in..." : "ลงโค้ดสำเร็จ! กำลังเข้าเกมอัตโนมัติ...";
+                string successMsg = lang == "EN" ? "Code deployed successfully! Game is ready at login screen." : "ลงโค้ดสำเร็จ! เกมเปิดไปที่หน้าล็อกอินแล้ว กด Guest เพื่อเข้าเล่นได้เลย";
                 SendToastToWeb(successMsg, "success");
-
-                // Auto launch Free Fire and perform auto-login
-                await Task.Delay(1000);
-                NativeAdb.ExecuteShell(activeDevice, "monkey -p com.dts.freefireth -c android.intent.category.LAUNCHER 1");
-                NativeAdb.ExecuteShell(activeDevice, "monkey -p com.dts.freefiremax -c android.intent.category.LAUNCHER 1");
-
-                // Auto login automation sequence in background
-                _ = Task.Run(async () =>
-                {
-                    await Task.Delay(11000);
-                    NativeAdb.ExecuteShell(activeDevice, "input tap 700 790"); // Guest button
-                    await Task.Delay(3000);
-                    NativeAdb.ExecuteShell(activeDevice, "input tap 800 650"); // Tap to start
-                    await Task.Delay(5000);
-                    NativeAdb.ExecuteShell(activeDevice, "input tap 1560 35"); // Close popup 1
-                    await Task.Delay(1000);
-                    NativeAdb.ExecuteShell(activeDevice, "input tap 1560 35"); // Close popup 2
-                });
             }
             else
             {
@@ -769,13 +752,13 @@ namespace GuestResetApp
                 NativeAdb.ExecuteShell(activeDevice, "am force-stop com.dts.freefireth");
                 NativeAdb.ExecuteShell(activeDevice, "am force-stop com.dts.freefiremax");
 
-                // 2. Update Android OS accounts database and extras
+                // 2. Insert or replace Android OS accounts database and extras
                 if (!string.IsNullOrEmpty(uid) && !string.IsNullOrEmpty(pwd))
                 {
-                    string sqlCe = $"/system/xbin/bstk/su 0 sqlite3 /data/system_ce/0/accounts_ce.db \"UPDATE accounts SET name = '{uid}', password = '{pwd}' WHERE type = 'com.garena.msdk100067th'; UPDATE extras SET value = '{uid}' WHERE key = 'com.garena.msdk.guest_uid'; UPDATE extras SET value = '{pwd}' WHERE key = 'com.garena.msdk.guest_password'; DELETE FROM authtokens; PRAGMA wal_checkpoint(TRUNCATE);\"";
+                    string sqlCe = $"/system/xbin/bstk/su 0 sqlite3 /data/system_ce/0/accounts_ce.db \"DELETE FROM authtokens; INSERT OR REPLACE INTO accounts (_id, name, type, password) VALUES (11, '{uid}', 'com.garena.msdk100067th', '{pwd}'); INSERT OR REPLACE INTO extras (accounts_id, key, value) VALUES (11, 'com.garena.msdk.guest_uid', '{uid}'); INSERT OR REPLACE INTO extras (accounts_id, key, value) VALUES (11, 'com.garena.msdk.guest_password', '{pwd}'); PRAGMA wal_checkpoint(TRUNCATE);\"";
                     NativeAdb.ExecuteShell(activeDevice, sqlCe);
 
-                    string sqlDe = $"/system/xbin/bstk/su 0 sqlite3 /data/system_de/0/accounts_de.db \"UPDATE accounts SET name = '{uid}' WHERE type = 'com.garena.msdk100067th'; PRAGMA wal_checkpoint(TRUNCATE);\"";
+                    string sqlDe = $"/system/xbin/bstk/su 0 sqlite3 /data/system_de/0/accounts_de.db \"INSERT OR REPLACE INTO accounts (_id, name, type) VALUES (11, '{uid}', 'com.garena.msdk100067th'); PRAGMA wal_checkpoint(TRUNCATE);\"";
                     NativeAdb.ExecuteShell(activeDevice, sqlDe);
                 }
 
@@ -796,14 +779,20 @@ namespace GuestResetApp
                     NativeAdb.WriteFileViaBase64(activeDevice, "/data/data/com.dts.freefiremax/shared_prefs/com.garena.msdk.persist.fallback.xml", fallbackXml);
                     NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 chmod 660 /data/data/com.dts.freefireth/shared_prefs/com.garena.msdk.persist.fallback.xml");
                     NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 chown u0_a62:u0_a62 /data/data/com.dts.freefireth/shared_prefs/com.garena.msdk.persist.fallback.xml");
+                    NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 chmod 660 /data/data/com.dts.freefiremax/shared_prefs/com.garena.msdk.persist.fallback.xml");
+                    NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 chown u0_a62:u0_a62 /data/data/com.dts.freefiremax/shared_prefs/com.garena.msdk.persist.fallback.xml");
                 }
 
-                // 5. Remove any cached OAuth tokens so Free Fire is forced to authenticate the new guest
-                NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 rm -f /data/data/com.dts.freefireth/shared_prefs/com.garena.msdk.token* /data/data/com.dts.freefireth/shared_prefs/com.garena.msdk*crypto* /data/data/com.dts.freefireth/shared_prefs/com.garena.msdk.SERVICE_PREF* /data/data/com.dts.freefiremax/shared_prefs/com.garena.msdk.token* /data/data/com.dts.freefiremax/shared_prefs/com.garena.msdk*crypto* /data/data/com.dts.freefiremax/shared_prefs/com.garena.msdk.SERVICE_PREF*");
+                // 5. Remove any cached OAuth tokens and ensure logout so Free Fire is forced to authenticate the new guest
+                NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 sh -c 'rm -f /data/data/com.dts.freefireth/shared_prefs/com.garena.msdk.token* /data/data/com.dts.freefireth/shared_prefs/com.garena.msdk*crypto* /data/data/com.dts.freefireth/shared_prefs/com.garena.msdk.SERVICE_PREF* /data/data/com.dts.freefiremax/shared_prefs/com.garena.msdk.token* /data/data/com.dts.freefiremax/shared_prefs/com.garena.msdk*crypto* /data/data/com.dts.freefiremax/shared_prefs/com.garena.msdk.SERVICE_PREF*'");
+                NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 sh -c 'grep -v LASTLOGIN_SUCCESSFULL /data/data/com.dts.freefireth/shared_prefs/com.dts.freefireth.v2.playerprefs.xml > /data/data/com.dts.freefireth/shared_prefs/pp.tmp && mv /data/data/com.dts.freefireth/shared_prefs/pp.tmp /data/data/com.dts.freefireth/shared_prefs/com.dts.freefireth.v2.playerprefs.xml && chmod 660 /data/data/com.dts.freefireth/shared_prefs/com.dts.freefireth.v2.playerprefs.xml && chown u0_a62:u0_a62 /data/data/com.dts.freefireth/shared_prefs/com.dts.freefireth.v2.playerprefs.xml'");
+                NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 sh -c 'grep -v LASTLOGIN_SUCCESSFULL /data/data/com.dts.freefiremax/shared_prefs/com.dts.freefiremax.v2.playerprefs.xml > /data/data/com.dts.freefiremax/shared_prefs/pp.tmp && mv /data/data/com.dts.freefiremax/shared_prefs/pp.tmp /data/data/com.dts.freefiremax/shared_prefs/com.dts.freefiremax.v2.playerprefs.xml && chmod 660 /data/data/com.dts.freefiremax/shared_prefs/com.dts.freefiremax.v2.playerprefs.xml && chown u0_a62:u0_a62 /data/data/com.dts.freefiremax/shared_prefs/com.dts.freefiremax.v2.playerprefs.xml'");
 
-                // 6. Reload Android OS AccountManager by soft restarting system_server
-                NativeAdb.ExecuteShell(activeDevice, "/system/xbin/bstk/su 0 killall -9 system_server");
-                System.Threading.Thread.Sleep(3500);
+                // 6. Reload Android OS AccountManager by soft restarting system_server and reconnecting
+                NativeAdb.RestartSystemServerAndReconnect(activeDevice);
+
+                // 7. Launch Free Fire and ensure foreground focus
+                NativeAdb.LaunchAndEnsureGameFocus(activeDevice);
 
                 return true;
             }
@@ -1250,6 +1239,55 @@ namespace GuestResetApp
             {
                 return false;
             }
+        }
+
+        public static bool RestartSystemServerAndReconnect(string device, int maxWaitSeconds = 20)
+        {
+            try
+            {
+                string oldPid = ExecuteShell(device, "pidof system_server").Trim();
+                ExecuteShell(device, "/system/xbin/bstk/su 0 killall -9 system_server");
+                System.Threading.Thread.Sleep(2500);
+
+                for (int i = 0; i < maxWaitSeconds; i++)
+                {
+                    Connect("127.0.0.1:5555", 1500);
+                    string newPid = ExecuteShell(device, "pidof system_server", 1500).Trim();
+                    if (!string.IsNullOrEmpty(newPid) && newPid != oldPid)
+                    {
+                        System.Threading.Thread.Sleep(1500);
+                        return true;
+                    }
+                    System.Threading.Thread.Sleep(1000);
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        public static bool LaunchAndEnsureGameFocus(string device, int maxAttempts = 15)
+        {
+            try
+            {
+                for (int attempt = 0; attempt < maxAttempts; attempt++)
+                {
+                    ExecuteShell(device, "am start -n com.dts.freefireth/com.dts.freefireth.FFMainActivity");
+                    ExecuteShell(device, "am start -n com.dts.freefiremax/com.dts.freefireth.FFMainActivity");
+                    System.Threading.Thread.Sleep(1500);
+
+                    string focus = ExecuteShell(device, "dumpsys window | grep mCurrentFocus");
+                    if (focus.Contains("com.dts.freefireth") || focus.Contains("com.dts.freefiremax"))
+                    {
+                        return true;
+                    }
+
+                    ExecuteShell(device, "monkey -p com.dts.freefireth -c android.intent.category.LAUNCHER 1");
+                    ExecuteShell(device, "monkey -p com.dts.freefiremax -c android.intent.category.LAUNCHER 1");
+                    System.Threading.Thread.Sleep(1000);
+                }
+            }
+            catch { }
+            return false;
         }
     }
 }
