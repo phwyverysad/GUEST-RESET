@@ -6,6 +6,14 @@ The tool runs as a completely standalone, self-contained single-file executable 
 
 ---
 
+## Interface Preview
+
+<p align="center">
+  <img src="docs/screenshot.png" alt="GUEST-RESET English Interface" width="600" />
+</p>
+
+---
+
 ## Features
 
 - Single-File Portable Executable: Built as a fully self-contained win-x64 binary with all UI assets, native libraries, and .NET runtimes embedded.
@@ -78,6 +86,8 @@ GUEST-RESET/
 |   |-- ui.html                    WebView2 frontend interface
 |   |-- app.ico                    Application icon
 |   |-- app_icon.png               Raster logo asset
+|-- docs/
+|   |-- screenshot.png             Application interface preview
 |-- .gitignore                     Git ignore rules for build and temporary files
 |-- README.md                      Project documentation
 ```
