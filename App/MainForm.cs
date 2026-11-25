@@ -234,7 +234,56 @@ namespace GuestResetApp
             }
             catch (Exception ex)
             {
-                MessageBox.Show("WebView2 Init Error: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                if (ex is Microsoft.Web.WebView2.Core.WebView2RuntimeNotFoundException ||
+                    ex.Message.Contains("WebView2", StringComparison.OrdinalIgnoreCase) ||
+                    ex.Message.Contains("runtime", StringComparison.OrdinalIgnoreCase))
+                {
+                    var dr = MessageBox.Show(
+                        "ไม่พบ Microsoft Edge WebView2 Runtime บนเครื่องนี้ ซึ่งจำเป็นต้องใช้ในการเปิดโปรแกรม\nต้องการดาวน์โหลดและติดตั้งอัตโนมัติทันทีหรือไม่?\n\n(Microsoft Edge WebView2 Runtime is required. Install now?)",
+                        "WebView2 Runtime Required",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Question);
+
+                    if (dr == DialogResult.Yes)
+                    {
+                        try
+                        {
+                            string installerPath = Path.Combine(Path.GetTempPath(), "MicrosoftEdgeWebview2Setup.exe");
+                            using (var hc = new System.Net.Http.HttpClient())
+                            {
+                                var data = hc.GetByteArrayAsync("https://go.microsoft.com/fwlink/p/?LinkId=2124703").GetAwaiter().GetResult();
+                                File.WriteAllBytes(installerPath, data);
+                            }
+                            var p = Process.Start(new ProcessStartInfo
+                            {
+                                FileName = installerPath,
+                                Arguments = "/silent /install",
+                                UseShellExecute = true
+                            });
+                            p?.WaitForExit();
+
+                            Application.Restart();
+                            Environment.Exit(0);
+                            return;
+                        }
+                        catch
+                        {
+                            try
+                            {
+                                Process.Start(new ProcessStartInfo
+                                {
+                                    FileName = "https://go.microsoft.com/fwlink/p/?LinkId=2124703",
+                                    UseShellExecute = true
+                                });
+                            }
+                            catch { }
+                        }
+                    }
+                }
+                else
+                {
+                    MessageBox.Show("WebView2 Init Error: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
             }
         }
 
